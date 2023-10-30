@@ -1,8 +1,8 @@
-import {crc32, CRC_TABLE} from './crc32.js'
+// import {crc32, CRC_TABLE} from './crc32.js'
 
-import {createChunk} from './png-chunks.js'
+// import {createChunk} from './png-chunks.js'
 import geotiffParser from './tiff-chunks.js'
-import {PNGTransformStream} from './png-transform-stream.js'
+import {TiffUnpacker} from './tiff-transform-stream.js'
 
 const tbody = document.getElementsByTagName('tbody')[0];
 
@@ -31,6 +31,7 @@ class LogStreamSink {
      */
     close() {
       this.createRow(this.name, this.counter, 'Closed');
+			console.log('tags', this.tiffUnpacker.tags);
     }
 
     /**
@@ -42,12 +43,16 @@ class LogStreamSink {
      */
     createRow(heading, counter, chunk) {
 		if (counter === 1) {	// первые 64Кб
-			this.tags = geotiffParser.parseHeader(chunk)
-			console.log('tags', this.tags);
+		    this.tiffUnpacker = new TiffUnpacker({chunk});
+
+			// this.tags = geotiffParser.parseHeader(chunk)
+			// console.log('tags', this.tiffUnpacker.tags);
+		} else {
+			this.tiffUnpacker.addBinaryData(chunk);
 		}
 		
       const col1 = counter;
-      const col2 = chunk.constructor.name;
+      const col2 = chunk.constructor.name + ' ' + chunk.length;
       const tr = document.createElement('tr');
       tbody.appendChild(tr);
       const th = document.createElement('th');
@@ -78,8 +83,19 @@ fetch('./data/B_RGB.tif')
   // Log each fetched Uint8Array chunk
   .then(rs => logReadableStream('Fetch Response Stream', rs))
   // Transform to a PNG chunk stream
-  .then(rs => rs.pipeThrough(new PNGTransformStream()))
+  // .then(rs => rs.pipeThrough(new TiffTransformStream({
+		// onChunk: ev => {
+			// console.log("onChunk", ev);
+		// },
+		// onClose: ev => {
+			// console.log("onClose", ev);
+		// },
+  // })))
   // Log each transformed PNG chunk
-  .then(rs => logReadableStream('PNG Chunk Stream', rs))
+  // .then(rs => logReadableStream('PNG Chunk Stream', rs))
+  .then(rs => {
+			console.log('fffffffff', rs);
+	  // logReadableStream('PNG Chunk Stream', rs);
+  })
 
 
