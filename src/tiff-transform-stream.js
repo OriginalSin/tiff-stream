@@ -15,6 +15,7 @@ export class TiffUnpacker {
     this.minBuf = 64 * 1024;
     this.onChunk = null;
     this.onClose = null;
+    this.tileCount = 0;
 	if (opt.chunk instanceof Uint8Array) this.addBinaryData(opt.chunk);
   }
 
@@ -140,15 +141,20 @@ console.log("tagName", tagName);
 		this.tags = tags;
 
 // console.log("firstIFDOffset", this.position, tags);
-	} else if (this.tags.tiles.length < this.tags.TileOffsets.length) {
+	} else if (this.tileCount < this.tags.TileOffsets.length) {
 		if (this.data.length < this.position) { // chunk маленький либо это не TIFF
 			return;
 		}
 		let len = this.data.length - this.position;
 		let nm = this.tags.tiles.length;
+		let tSize = {width: this.tags.TileWidth, height: this.tags.TileLength};
+		let dx = tSize.width;
+		let w = Math.sqrt(this.tags.TileByteCounts.length);
 		do {
 			const newData = new Uint8Array(this.data.buffer, 0, this.position);
 			this.tags.tiles.push(newData);
+			this.tileCount++;
+			// this.Render.call(this, newData, tSize, dx * (n % w), dx * Math.floor(n / w));
 			this.data = this.data.slice(this.position, this.data.length);
 			len = this.data.length - this.position;
 		} while(len > 0)
