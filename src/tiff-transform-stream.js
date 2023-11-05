@@ -1,8 +1,7 @@
 /**
- * This file contains a TiffTransformStream.
+ * This file contains a TiffUnpacker.
  */
 import { fieldTagNames } from './globals.js';
-// import { fieldTypes, fieldTagNames, arrayFields, geoKeyNames, geoKeys, CompressionTypes } from './globals.js';
 import geoKeyDirectory from './geoKeyDirectory.js';
 
 
@@ -10,46 +9,37 @@ import geoKeyDirectory from './geoKeyDirectory.js';
  * This class unpacks Uint8Arrays and sends PNG chunks when it gained enough data.
  */
 export class TiffUnpacker {
-  constructor(opt = {}) {
-    this.data = new Uint8Array(0);
-    this.minBuf = 64 * 1024;
-    this.onChunk = null;
-    this.onClose = null;
-    this.tileCount = 0;
-	if (opt.chunk instanceof Uint8Array) this.addBinaryData(opt.chunk);
-  }
+	constructor(opt = {}) {
+		this.data = new Uint8Array(0);
+		this.minBuf = 64 * 1024;
+		this.onTags = opt.onTags;
+		this.onTile = opt.onTile;
+		this.onChunk = null;
+		this.onClose = null;
+		// this.num = 0;				
+		this.tileCount = 0;		// текущий номер тайла
+		if (opt.chunk instanceof Uint8Array) this.addBinaryData(opt.chunk);
+	}
 
   /**
    * Adds more binary data to unpack.
    *
    * @param {Uint8Array} uint8Array The data to add.
    */
-  addBinaryData(uint8Array) {
+	addBinaryData(uint8Array) {
 // console.log("addBinaryData", this.position, uint8Array.length);
-    const newData = new Uint8Array(this.data.length + uint8Array.length);
-    newData.set(this.data, 0);
-    newData.set(uint8Array, this.data.length);
-    this.data = newData;
+		const newData = new Uint8Array(this.data.length + uint8Array.length);
+		newData.set(this.data, 0);
+		newData.set(uint8Array, this.data.length);
+		this.data = newData;
 
-    this.checkForChunks();
-  }
+		this.checkForChunks();
+	}
   
   /**
-   * Checks whether new chunks can be found within the binary data.
+   * Получение описания TIFF.
    */
-  checkForChunks() {
-    if (!this.position) this.position = 0;
-// console.log("vvv", this.position, this.data);
-
-	if (this.data.length < this.minBuf) return;	// chunk маленький - ожидаем пополнения
-// console.log("vvv1111", this.position, this.data);
-	
-    // while (true) {		// Check if stream contains another TIFF chunk
-	const dataView = new DataView(this.data.buffer, 0);
-	// const dataView = new DataView(this.data.buffer, this.position);
-	
-	// if (!this.tags) { // Получение описания TIFF
-	if (!this.tags && this.position === 0) { // Получение описания TIFF
+	checkTiffTags(dataView) {
 		if (this.NotTiff || dataView.byteLength < 1024) { // chunk маленький либо это не TIFF
 			return;
 		}
@@ -83,9 +73,9 @@ export class TiffUnpacker {
 				let actualOffset = bigTiff ? dataView.getUint64(valueOffset, LE) : val;
 
 				const nm = actualOffset / fLength;
-				if (tagName === 'TileByteCounts' || tagName === 'TileOffsets') {
-console.log("tagName", tagName);
-				}
+				// if (tagName === 'TileByteCounts' || tagName === 'TileOffsets') {
+					// console.log("tagName", tagName);
+				// }
 				if (fLength === 8) {
 					val = new Array(typeCount).fill(1).map((v, i) => { return dataView.getFloat64(actualOffset + i * fLength, LE); });
 				} else if (fLength === 1) { // Ascii
@@ -114,7 +104,6 @@ console.log("tagName", tagName);
 			let fLength = 2;
 			
 			let fieldValues;// = dataView.getUint16(valueOffset, LE); // по умолчанию
-			// if (fLength * typeCount > byteRange) { 	// resolve the reference to the actual byte range
 			let attr = {tagName, valueOffset, fLength, typeCount, bigTiff};
 			switch(fieldType) {
 				case 2:
@@ -136,54 +125,42 @@ console.log("tagName", tagName);
 		this.position = tags.TileByteCounts[0];
 		this.data = this.data.slice(tags.TileOffsets[0], this.data.length);
 
-		// this.reduceBinaryData(tags.TileOffsets[0]);
-		tags.tiles = [];
+		tags.tilesConf = {
+			tSize: {width: tags.TileWidth, height: tags.TileLength},
+			colCount: Math.sqrt(tags.TileByteCounts.length)
+		};
+
 		this.tags = tags;
-
-// console.log("firstIFDOffset", this.position, tags);
-	} else if (this.tileCount < this.tags.TileOffsets.length) {
-		if (this.data.length < this.position) { // chunk маленький либо это не TIFF
-			return;
-		}
-		let len = this.data.length - this.position;
-		let nm = this.tags.tiles.length;
-		let tSize = {width: this.tags.TileWidth, height: this.tags.TileLength};
-		let dx = tSize.width;
-		let w = Math.sqrt(this.tags.TileByteCounts.length);
-		do {
-			const newData = new Uint8Array(this.data.buffer, 0, this.position);
-			this.tags.tiles.push(newData);
-			this.tileCount++;
-			// this.Render.call(this, newData, tSize, dx * (n % w), dx * Math.floor(n / w));
-			this.data = this.data.slice(this.position, this.data.length);
-			len = this.data.length - this.position;
-		} while(len > 0)
-			
-		// return;
+		if (this.onTags) this.onTags(tags);
 	}
-		
-  }
-}
 
-/**
- * This transform stream unpacks PNG chunks out of binary data.
- * It can be consumed by a ReadableStream's pipeThrough method.
- */
-export class TiffTransformStream {
-  constructor() {
-    const unpacker = new TiffUnpacker();
+  /**
+   * Checks whether new chunks can be found within the binary data.
+   */
+	checkForChunks() {
+		if (!this.position) this.position = 0;
+		if (this.data.length < this.minBuf) return;	// chunk маленький - ожидаем пополнения
+	
+		const dataView = new DataView(this.data.buffer, 0);
+		this.dataView = dataView;
+		let num = this.tileCount;
+	
+		if (!this.tags && this.position === 0) { // Получение описания TIFF
+			this.checkTiffTags(dataView);
+		} else if (num < this.tags.TileOffsets.length) { // Получение тайлов
+			if (this.data.length < this.position) return; // chunk маленький либо это не TIFF
 
-    this.readable = new ReadableStream({
-      start(controller) {
-        unpacker.onChunk = chunk => controller.enqueue(chunk);
-        unpacker.onClose = () => controller.close();
-      }
-    });
-
-    this.writable = new WritableStream({
-      write(uint8Array) {
-        unpacker.addBinaryData(uint8Array);
-      }
-    });
-  }
+			const tc = this.tags.tilesConf;
+			const tSize = tc.tSize;
+			do {
+				const ndarray = new Uint8Array(this.data.buffer, 0, this.position);
+				const dx = tSize.width * (num % tc.colCount);
+				const dy = tSize.height * Math.floor(num / tc.colCount);
+				if (this.onTile) this.onTile({ ndarray, tSize, dx, dy, num });
+				num++;
+				this.data = this.data.slice(this.position, this.data.length);
+			} while(this.data.length - this.position > 0)
+			this.tileCount = num;
+		}
+	}
 }
