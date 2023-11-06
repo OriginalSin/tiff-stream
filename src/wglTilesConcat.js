@@ -12,11 +12,11 @@ export default class TilesConcat {
 		this.canvas = canvas;
 		this.tags = tags;
 
-		this.bitmapSize = {
-			...imageSize,
-			tSize: {width: tags.TileWidth, height: tags.TileLength},
-			w: Math.sqrt(tags.TileByteCounts.length)
-		};
+		// this.bitmapSize = {
+			// ...imageSize,
+			// tSize: {width: tags.TileWidth, height: tags.TileLength},
+			// w: Math.sqrt(tags.TileByteCounts.length)
+		// };
 		this.program = glUtils.createProgramFromSources(this.gl, [vss, fss]);
 		this.init();
 	}
@@ -107,7 +107,10 @@ export default class TilesConcat {
 	Render(opt) { // отрисовка тайла
 		const {gl, program} = this;
 		const {ndarray, tSize, dx = 0, dy = 0} = opt;
-		const {width, height} = tSize;			// размеры тайла
+		if (!tSize) {
+			return;	// TODO: по строкам изображения
+		}
+		const {width, height} = tSize || {};			// размеры тайла
 		const bitmapType = ndarray.constructor.name;	// тип ndarray
 		const bitmapChanels = ndarray.length / (width * height);	// сколько каналов
 		const DefPars = {

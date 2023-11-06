@@ -73,18 +73,18 @@ export class TiffUnpacker {
 				let actualOffset = bigTiff ? dataView.getUint64(valueOffset, LE) : val;
 
 				const nm = actualOffset / fLength;
-				// if (tagName === 'TileByteCounts' || tagName === 'TileOffsets') {
-					// console.log("tagName", tagName);
-				// }
+				if (tagName === 'TileByteCounts' || tagName === 'TileOffsets') {
+					console.log("tagName", tagName, fLength);
+				}
 				if (fLength === 8) {
 					val = new Array(typeCount).fill(1).map((v, i) => { return dataView.getFloat64(actualOffset + i * fLength, LE); });
 				} else if (fLength === 1) { // Ascii
-				// } else if (tagName === 'GeoAsciiParams') {
 					val = new TextDecoder('utf-8').decode(a8.slice(nm, nm + typeCount));
 				} else if (fLength === 2) {
 					val = Array.from(a16.slice(nm, nm + typeCount));
 				} else if (fLength === 4) {
-					val = Array.from(a32.slice(nm, nm + typeCount));
+					val = new Array(typeCount).fill(1).map((v, i) => { return dataView.getUint32(actualOffset + i * fLength, LE); });
+					// val = Array.from(a32.slice(nm, nm + typeCount));
 				}
 			}
 			return val;
@@ -105,11 +105,16 @@ export class TiffUnpacker {
 			
 			let fieldValues;// = dataView.getUint16(valueOffset, LE); // по умолчанию
 			let attr = {tagName, valueOffset, fLength, typeCount, bigTiff};
+if (tagName === 'TileByteCounts' || tagName === 'TileOffsets') {
+	console.log("fieldType", tagName, fieldType, fLength, tags.BitsPerSample);
+}
 			switch(fieldType) {
 				case 2:
 					fieldValues = getFieldValues({...attr, fLength: 1});
 					break;
 				case 4:
+					// if (tags.BitsPerSample.length === 3) fLength = 4;
+					// else if (tags.BitsPerSample.length === 4) fLength = 8;
 					fieldValues = getFieldValues({...attr, fLength: 4});
 					break;
 				case 12:	// getFloat64
@@ -122,13 +127,25 @@ export class TiffUnpacker {
 			tags[tagName] = fieldValues;
 		}
 		tags.geoKeyDirectory = geoKeyDirectory(tags);
-		this.position = tags.TileByteCounts[0];
-		this.data = this.data.slice(tags.TileOffsets[0], this.data.length);
+		tags.isTiled = tags.TileByteCounts;
+		// tags.isTiled = !tags.StripOffsets;
+		if (tags.isTiled) {
+			this.position = tags.TileByteCounts[0];
+			this.data = this.data.slice(tags.TileOffsets[0], this.data.length);
+			tags.tilesConf = {
+				tSize: {width: tags.TileWidth, height: tags.TileLength},
+				colCount: Math.sqrt(tags.TileByteCounts.length)
+			};
+		} else {
+			this.position = tags.StripByteCounts[0];
+			this.data = this.data.slice(tags.StripOffsets[0], this.data.length);
 
-		tags.tilesConf = {
-			tSize: {width: tags.TileWidth, height: tags.TileLength},
-			colCount: Math.sqrt(tags.TileByteCounts.length)
-		};
+			// let rstrip = Math.min(tags.RowsPerStrip, tags.ImageLength);
+			// let ww = tags.ImageWidth;
+console.warn("TODO: необходимо еще разобраться с ключами tags.StripOffsets и tags.StripByteCounts ", tags);
+// return;
+		}
+
 
 		this.tags = tags;
 		if (this.onTags) this.onTags(tags);
@@ -147,16 +164,29 @@ export class TiffUnpacker {
 	
 		if (!this.tags && this.position === 0) { // Получение описания TIFF
 			this.checkTiffTags(dataView);
-		} else if (num < this.tags.TileOffsets.length) { // Получение тайлов
+		} else if (num < this.tags[this.tags.isTiled ? 'TileOffsets' : 'StripOffsets'].length) { // Получение тайлов
 			if (this.data.length < this.position) return; // chunk маленький либо это не TIFF
 
-			const tc = this.tags.tilesConf;
-			const tSize = tc.tSize;
+			const tags = this.tags;
+		// if (tags.isTiled) {
 			do {
-				const ndarray = new Uint8Array(this.data.buffer, 0, this.position);
-				const dx = tSize.width * (num % tc.colCount);
-				const dy = tSize.height * Math.floor(num / tc.colCount);
-				if (this.onTile) this.onTile({ ndarray, tSize, dx, dy, num });
+				if (tags.isTiled) {
+					const ndarray = new Uint8Array(this.data.buffer, 0, this.position);
+			const tc = tags.tilesConf;
+			const tSize = tc.tSize;
+					const dx = tSize.width * (num % tc.colCount);
+					const dy = tSize.height * Math.floor(num / tc.colCount);
+					if (this.onTile) this.onTile({ ndarray, tSize, dx, dy, num });
+				} else {
+					const bps = tags.BitsPerSample;
+					if (tags.BitsPerSample === 16) {
+						const ndarray = new Uint16Array(this.data.buffer, 0, this.position);
+						const dx = 0;
+						const dy = Math.floor(num / tags.ImageWidth);
+						if (this.onTile) this.onTile({ ndarray, dx, dy, num });  // одна строка изображения
+					}
+					
+				}
 				num++;
 				this.data = this.data.slice(this.position, this.data.length);
 			} while(this.data.length - this.position > 0)
