@@ -8,7 +8,7 @@ export default class TilesConcat {
 		const { imageSize } = tags;
 		
 		canvas.width = imageSize.width, canvas.height = imageSize.height;
-		this.gl = canvas.getContext("webgl2");	// Get A WebGL context
+		this.gl = canvas.getContext("webgl2", {preserveDrawingBuffer: true});	// Get A WebGL context
 		this.canvas = canvas;
 		this.tags = tags;
 

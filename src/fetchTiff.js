@@ -13,8 +13,9 @@ class TiffStream {
 				tilesConcat = new TilesConcat({canvas, tags});
 			},
 			onTile: tile => {
-				pull.push(tile);
-				if (tilesConcat) { pull.forEach(tilesConcat.Render.bind(tilesConcat)); }
+				// pull.push(tile);
+				if (tilesConcat) { tilesConcat.Render.call(tilesConcat, tile); }
+				// if (tilesConcat) { pull.forEach(tilesConcat.Render.bind(tilesConcat)); }
 			}
 		});
 		this.write = tiffUnpacker.addBinaryData.bind(tiffUnpacker);		// Called when a chunk is read.
