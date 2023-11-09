@@ -54,81 +54,60 @@ export class TiffUnpacker {
 		const bigTiff = this.bigTiff = magicNumber === 42 ? false : true;
 		const entrySize = bigTiff ? 20 : 12, offsetSize = bigTiff ? 8 : 2, byteRange = bigTiff ? 8 : 4;
 
-		let offset = 8, offsetByteSize = 0;
-		let firstIFDOffset = dataView.getUint32(16, LE); //a32[4];
-		if (bigTiff) {
-			offsetByteSize = dataView.getUint16(8, LE); //a16[4];
-			if (offsetByteSize !== 8) {
-				throw new Error('Unsupported offset byte-size.');
-			}
-			firstIFDOffset = dataView.getUint64(8, LE);
-		}
+		// let offset = 8, offsetByteSize = 0;
+		// let firstIFDOffset = dataView.getUint32(16, LE); // ??
+		// if (bigTiff) {
+			// offsetByteSize = dataView.getUint16(8, LE);
+			// if (offsetByteSize !== 8) {
+				// throw new Error('Unsupported offset byte-size.');
+			// }
+			// firstIFDOffset = dataView.getUint64(8, LE);
+		// }
 		const a8 = this.data;
-		const a16 = new Uint16Array(a8.buffer);
-		const a32 = new Uint32Array(a8.buffer);
 		const getFieldValues = (data) => {
-			const {tagName, valueOffset, fLength, typeCount, bigTiff, read_order} = data;
+			const {valueOffset, fLength, typeCount, bigTiff} = data;
 			let val = dataView.getUint16(valueOffset, LE); // по умолчанию
 			if (fLength * typeCount > byteRange) { 	// resolve the reference to the actual byte range
-				let actualOffset = bigTiff ? dataView.getUint64(valueOffset, LE) : val;
-
-				const nm = actualOffset / fLength;
-				if (tagName === 'TileByteCounts' || tagName === 'TileOffsets') {
-					console.log("tagName", tagName, fLength);
-				}
-				if (fLength === 8) {
-					val = new Array(typeCount).fill(1).map((v, i) => { return dataView.getFloat64(actualOffset + i * fLength, LE); });
-				} else if (fLength === 1) { // Ascii
-					val = new TextDecoder('utf-8').decode(a8.slice(nm, nm + typeCount));
+				let pos = bigTiff ? dataView.getUint64(valueOffset, LE) : val;
+				const tmp = new Array(typeCount).fill(1);
+				if (fLength === 1) { // Ascii
+					val = new TextDecoder('utf-8').decode(a8.slice(pos, pos + typeCount));
 				} else if (fLength === 2) {
-					val = Array.from(a16.slice(nm, nm + typeCount));
+					val = tmp.map((v, i) => { return dataView.getUint16(pos + i * fLength, LE); });
 				} else if (fLength === 4) {
-					val = new Array(typeCount).fill(1).map((v, i) => { return dataView.getUint32(actualOffset + i * fLength, LE); });
-					// val = Array.from(a32.slice(nm, nm + typeCount));
+					val = tmp.map((v, i) => { return dataView.getUint32(pos + i * fLength, LE); });
+				} else if (fLength === 8) {
+					val = tmp.map((v, i) => { return dataView.getFloat64(pos + i * fLength, LE); });
 				}
 			}
 			return val;
 		}
 
 		let dpos = dataView.getUint32(4, LE);
-		let i = offset + (bigTiff ? 8 : 2);
+		let i = 8 + (bigTiff ? 8 : 2);
 		const numDirEntries = dataView.getUint16(dpos, LE);
 		for (let entryCount = 0; entryCount < numDirEntries; i += entrySize, ++entryCount) {
 			let x = dpos + offsetSize + entrySize * entryCount;
 			const tag_ = dataView.getUint16(x, LE);
 			const tagName = fieldTagNames[tag_];
 			
-			const valueOffset = i + (bigTiff ? 12 : 8);
+			let attr = {
+				tagName,
+				valueOffset: i + (bigTiff ? 12 : 8),
+				fLength: 2,
+				typeCount: bigTiff ? dataView.getUint64(i + 4, LE) : dataView.getUint16(i + 4, LE),
+				bigTiff
+			};
 			const fieldType = dataView.getUint16(i + 2, LE);
-			const typeCount = bigTiff ? dataView.getUint64(i + 4, LE) : dataView.getUint16(i + 4, LE);
-			let fLength = 2;
-			
-			let fieldValues;// = dataView.getUint16(valueOffset, LE); // по умолчанию
-			let attr = {tagName, valueOffset, fLength, typeCount, bigTiff};
-if (tagName === 'TileByteCounts' || tagName === 'TileOffsets') {
-	console.log("fieldType", tagName, fieldType, fLength, tags.BitsPerSample);
-}
 			switch(fieldType) {
-				case 2:
-					fieldValues = getFieldValues({...attr, fLength: 1});
-					break;
-				case 4:
-					// if (tags.BitsPerSample.length === 3) fLength = 4;
-					// else if (tags.BitsPerSample.length === 4) fLength = 8;
-					fieldValues = getFieldValues({...attr, fLength: 4});
-					break;
-				case 12:	// getFloat64
-					fieldValues = getFieldValues({...attr, fLength: 8});
-					break;
-				default:
-					fieldValues = getFieldValues(attr);
-					break;
+				case 2: attr.fLength = 1; break;
+				case 4: attr.fLength = 4; break;
+				case 12: attr.fLength = 8; break;
 			}
-			tags[tagName] = fieldValues;
+			tags[tagName] = getFieldValues(attr);;
 		}
 		tags.geoKeyDirectory = geoKeyDirectory(tags);
 		tags.isTiled = tags.TileByteCounts;
-		// tags.isTiled = !tags.StripOffsets;
 		if (tags.isTiled) {
 			this.position = tags.TileByteCounts[0];
 			this.data = this.data.slice(tags.TileOffsets[0], this.data.length);
@@ -138,14 +117,15 @@ if (tagName === 'TileByteCounts' || tagName === 'TileOffsets') {
 			};
 		} else {
 			this.position = tags.StripByteCounts[0];
+			this.minBuf = this.position;
 			this.data = this.data.slice(tags.StripOffsets[0], this.data.length);
-
-			// let rstrip = Math.min(tags.RowsPerStrip, tags.ImageLength);
-			// let ww = tags.ImageWidth;
-console.warn("TODO: необходимо еще разобраться с ключами tags.StripOffsets и tags.StripByteCounts ", tags);
-// return;
+			tags.tilesConf = {
+				tSize: {width: tags.ImageWidth, height: 1},
+				colCount: 1
+			};
 		}
 
+// console.warn("---------- ", tags);
 
 		this.tags = tags;
 		if (this.onTags) this.onTags(tags);
@@ -165,25 +145,27 @@ console.warn("TODO: необходимо еще разобраться с клю
 		if (!this.tags && this.position === 0) { // Получение описания TIFF
 			this.checkTiffTags(dataView);
 		} else if (num < this.tags[this.tags.isTiled ? 'TileOffsets' : 'StripOffsets'].length) { // Получение тайлов
-			if (this.data.length < this.position) return; // chunk маленький либо это не TIFF
-
 			const tags = this.tags;
-		// if (tags.isTiled) {
+			const nextCount = tags.isTiled ? tags.TileByteCounts[num] : tags.StripByteCounts[num];
+			if (this.data.length < nextCount) return; // chunk маленький либо это не TIFF
+
 			do {
 				if (tags.isTiled) {
-					const ndarray = new Uint8Array(this.data.buffer, 0, this.position);
-			const tc = tags.tilesConf;
-			const tSize = tc.tSize;
+					const ndarray = new Uint8Array(this.data.buffer, 0, nextCount);
+					const tc = tags.tilesConf;
+					const tSize = tc.tSize;
 					const dx = tSize.width * (num % tc.colCount);
 					const dy = tSize.height * Math.floor(num / tc.colCount);
 					if (this.onTile) this.onTile({ ndarray, tSize, dx, dy, num });
 				} else {
 					const bps = tags.BitsPerSample;
 					if (tags.BitsPerSample === 16) {
-						const ndarray = new Uint16Array(this.data.buffer, 0, this.position);
+						const ndarray = new Uint16Array(this.data.buffer, 0, nextCount / 2);
 						const dx = 0;
-						const dy = Math.floor(num / tags.ImageWidth);
-						if (this.onTile) this.onTile({ ndarray, dx, dy, num });  // одна строка изображения
+						const dy = num;
+						const tc = tags.tilesConf;
+						const tSize = tc.tSize;
+						if (this.onTile) this.onTile({ ndarray, tSize, dx, dy, num });  // одна строка изображения
 					}
 					
 				}

@@ -11,4 +11,5 @@ file.addEventListener('change', ev => {
 	requestAnimationFrame(() =>	target.value = '');
 });
 
+// fetchTiff('./data/16b.tif', canvasNode);
 fetchTiff('./data/B_RGB.tif', canvasNode);

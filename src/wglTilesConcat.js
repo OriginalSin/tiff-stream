@@ -11,13 +11,9 @@ export default class TilesConcat {
 		this.gl = canvas.getContext("webgl2", {preserveDrawingBuffer: true});	// Get A WebGL context
 		this.canvas = canvas;
 		this.tags = tags;
-
-		// this.bitmapSize = {
-			// ...imageSize,
-			// tSize: {width: tags.TileWidth, height: tags.TileLength},
-			// w: Math.sqrt(tags.TileByteCounts.length)
-		// };
-		this.program = glUtils.createProgramFromSources(this.gl, [vss, fss]);
+		
+		let parr = [vss, tags.TileByteCounts ? fss : fss16];
+		this.program = glUtils.createProgramFromSources(this.gl, parr);
 		this.init();
 	}
 
@@ -31,6 +27,7 @@ export default class TilesConcat {
 		const {gl, program} = this;
 		const canvas = this.canvas;
 
+var color_buffer_float_16ui = gl.getExtension('EXT_color_buffer_float'); // add for 16-bit
 		// look up where the vertex data needs to go.
 		const positionAttributeLocation = gl.getAttribLocation(program, "a_position");
 		const texCoordAttributeLocation = gl.getAttribLocation(program, "a_texCoord");
@@ -99,6 +96,7 @@ export default class TilesConcat {
 		// Tell the shader to get the texture from texture unit 0
 		const imageLocation = gl.getUniformLocation(program, "u_image");
 		gl.uniform1i(imageLocation, 0);
+// gl.uniform2i(imageLocation, [0, 0]); // для usampler2D
 
 		// Bind the position buffer so gl.bufferData that will be called in setRectangle puts data in the position buffer
 		gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
@@ -126,6 +124,14 @@ export default class TilesConcat {
 					srcFormat = gl.RGB;
 					// gl.pixelStorei( gl.UNPACK_ALIGNMENT, 1);
 
+				}
+				break;
+			case 'Uint16Array':
+				if (bitmapChanels === 1) {
+	// gl.pixelStorei( gl.UNPACK_ALIGNMENT, 1);
+					internalFormat = gl.R16UI;
+					srcFormat = gl.RED_INTEGER;
+					srcType = gl.UNSIGNED_SHORT;
 				}
 				break;
 			case 'Float32Array':
@@ -188,5 +194,25 @@ const fss = `#version 300 es
 
 	void main() {
 	  outColor = texture(u_image, v_texCoord);
+	}
+`;
+
+const fss16 = `#version 300 es
+	precision highp float;
+
+	// uniform sampler2D u_image;		// our texture
+	uniform highp usampler2D u_image;		// our texture
+	in vec2 v_texCoord;				// the texCoords passed in from the vertex shader.
+	out vec4 outColor;				// we need to declare an output for the fragment shader
+
+	void main() {
+		uvec4 unsignedIntValues = texture(u_image, v_texCoord);
+		float v = float(unsignedIntValues[0]) / 65535.0;
+		vec4 floatValues0To65535 = vec4(v, v, v, 1.0);
+		// vec4 colorValues0To1 = floatValues0To65535 / 65535.0;
+		outColor = floatValues0To65535;
+		
+		// outColor = vec4(texture(u_image, v_texCoord)) / 65535.0;
+	  // outColor = texture(u_image, v_texCoord);
 	}
 `;
