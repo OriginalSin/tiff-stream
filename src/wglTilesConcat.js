@@ -1,113 +1,144 @@
-import * as glUtils from './glUtils.js';
+import * as webglUtils from './glUtils.js';
+import m4 from './m4.js';
 
 "use strict";
+const qualityOptions = { anisotropicFiltering: true, mipMapping: true, linearFiltering: true };
+const _anisoExt = null;//, srcPoints, matrix, glResources, gl;
+const contextOpt = {preserveDrawingBuffer: true};
 
 export default class TilesConcat {
-	constructor(opt) {
-		const { canvas, screen, programs = [], tags } = opt;
-		const { imageSize } = tags;
+	constructor(options) {
+		const { canvas, maxSize = {}, programs = [] } = options;
 		
-		canvas.width = imageSize.width, canvas.height = imageSize.height;
-		this.gl = canvas.getContext("webgl2", {preserveDrawingBuffer: true});	// Get A WebGL context
+		// canvas.width = options.ImageWidth;
+		// canvas.height = options.ImageLength;
+		// canvas.width = maxSize.width || options.ImageWidth;
+		// canvas.height = maxSize.height || options.ImageLength;
+		const gl = canvas.getContext("webgl2", contextOpt);	// Get A WebGL context
+		this.gl = gl;
 		this.canvas = canvas;
-		this.tags = tags;
-		
-		let parr = [vss, tags.TileByteCounts ? fss : fss16];
-		this.program = glUtils.createProgramFromSources(this.gl, parr);
+		this.tags = options;
+ console.warn('__constructor__', options);
+
+		const program = webglUtils.createProgramFromSources(this.gl, [vss, fss]);
+		this.program = program
+
+		// look up where the vertex data needs to go.
+		this.positionLocation = gl.getAttribLocation(program, "a_position");
+		this.texcoordLocation = gl.getAttribLocation(program, "a_texcoord");
+
+		// lookup uniforms
+		this.matrixLocation = gl.getUniformLocation(program, "u_matrix");
+		this.textureLocation = gl.getUniformLocation(program, "u_texture");
+
 		this.init();
+		this.vpScale = 1; // зум viewport
+		this.vpPos = [0, 0]; // смещение viewport
+		this.vpShift = [0, 0]; // текущее смещение viewport
+		const maxx = this.tags.ImageWidth - this.canvas.width;
+		const maxy = this.tags.ImageLength - this.canvas.height;
+		
+		const onMess = (event) => {
+			const { type, canvas, pos = [0,0], scale} = event.data;
+		// console.log('onMess', type, shift, event)
+			if (scale) this.vpScale = scale;
+			if (type === 'drag') {
+				const [px, py] = pos;
+				this.vpShift[0] = px;
+				this.vpShift[1] = py;
+				// if (px <= maxx && px >= 0) this.vpShift[0] = px;
+				// if (py <= maxy && py >= 0) this.vpShift[1] = py;
+			// } else if (type === 'scale') {
+				// this.vpScale = scale;
+				// this.vpShift = [0, 0];
+			}
+			// let px = this.vpShift[0] + shift[0];
+			// if (px <= maxx && px >= 0) this.vpShift[0] = px;
+			// let py = this.vpShift[1] + shift[1];
+			// if (py <= maxy && py >= 0) this.vpShift[1] = py;
+		};
+		self.addEventListener("message", onMess.bind(this), false);
+		requestAnimationFrame(this.autoFrame.bind(this));
+	}
+
+    autoFrame(time) {
+		this.draw();
+		requestAnimationFrame(this.autoFrame.bind(this));
 	}
 
     resize(screen) {
-		const { canvas } = this;
-		canvas.width = canvas.clientWidth = screen.width, canvas.height = canvas.clientHeight = screen.height;
- // console.warn('__resize__', canvas.width, this.gl.canvas.width, twgl.m4);
+		const { canvas, maxSize} = this;
+		canvas.width = canvas.clientWidth = maxSize.width || screen.width;
+		canvas.height = canvas.clientHeight = maxSize.height || screen.height;
+ console.warn('__resize__', canvas.width, this.gl.canvas.width, twgl.m4);
 	}
 
     init() {
-		const {gl, program} = this;
-		const canvas = this.canvas;
+		const {gl} = this;
+		// const canvas = this.canvas;
+		
+			// Create a buffer.
+		var positionBuffer = gl.createBuffer();
+		this.positionBuffer = positionBuffer;
+		gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer);
+			// Put a unit quad in the buffer
+		var positions = [
+		0, 0,
+		0, 1,
+		1, 0,
+		1, 0,
+		0, 1,
+		1, 1,
+		];
+		gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
 
-var color_buffer_float_16ui = gl.getExtension('EXT_color_buffer_float'); // add for 16-bit
-		// look up where the vertex data needs to go.
-		const positionAttributeLocation = gl.getAttribLocation(program, "a_position");
-		const texCoordAttributeLocation = gl.getAttribLocation(program, "a_texCoord");
+		  // Create a buffer for texture coords
+		var texcoordBuffer = gl.createBuffer();
+		this.texcoordBuffer = texcoordBuffer;
+		gl.bindBuffer(gl.ARRAY_BUFFER, this.texcoordBuffer);
 
-		const vao = gl.createVertexArray();		// Create a vertex array object (attribute state)
-		gl.bindVertexArray(vao);				// and make it the one we're currently working with
+		// Put texcoords in the buffer
+		var texcoords = [
+		0, 0,
+		0, 1,
+		1, 0,
+		1, 0,
+		0, 1,
+		1, 1,
+		];
+		gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(texcoords), gl.STATIC_DRAW);
 
-		const positionBuffer = gl.createBuffer();	// Create a buffer and put a single pixel space rectangle in it (2 triangles)
-
-		gl.enableVertexAttribArray(positionAttributeLocation);  // Turn on the attribute
-
-		gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);	// Bind it to ARRAY_BUFFER (think of it as ARRAY_BUFFER = positionBuffer)
-
-		gl.vertexAttribPointer(		// Tell the attribute how to get data out of positionBuffer (ARRAY_BUFFER)
-		  positionAttributeLocation,
-		  2,			// 2 components per iteration
-		  gl.FLOAT,		// the data is 32bit floats
-		  false,		// don't normalize the data
-		  0,			// stride 0 = move forward size * sizeof(type) each iteration to get the next position
-		  0				// offset = 0; // start at the beginning of the buffer
-		);
-
-		const texCoordBuffer = gl.createBuffer();	// provide texture coordinates for the rectangle.
-		gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
-		gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
-		  0.0,  0.0,
-		  1.0,  0.0,
-		  0.0,  1.0,
-		  0.0,  1.0,
-		  1.0,  0.0,
-		  1.0,  1.0,
-		]), gl.STATIC_DRAW);
-
-		gl.enableVertexAttribArray(texCoordAttributeLocation);	// Turn on the attribute
-
-		gl.vertexAttribPointer(		// Tell the attribute how to get data out of texCoordBuffer (ARRAY_BUFFER)
-		  texCoordAttributeLocation,
-			2,          // size: 2 components per iteration
-			gl.FLOAT,   // type: the data is 32bit floats
-			false,		// normalize don't normalize the data
-			0,        	// stride: 0 = move forward size * sizeof(type) each iteration to get the next position
-			0        	// offset: start at the beginning of the buffer
-		  );
-
-		const texture = gl.createTexture();	// Create a texture.
-		gl.activeTexture(gl.TEXTURE0 + 0);	// make unit 0 the active texture uint (ie, the unit all other texture commands will affect
-		gl.bindTexture(gl.TEXTURE_2D, texture); // Bind it to texture unit 0' 2D bind point
-
-		// Set the parameters so we don't need mips and so we're not filtering
-		// and we don't repeat at the edges
-		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-	 
-		glUtils.resizeCanvasToDisplaySize(canvas);
-
-		gl.viewport(0, 0, canvas.width, canvas.height);  // Tell WebGL how to convert from clip space to pixels
-
-		gl.useProgram(program);		// Tell it to use our program (pair of shaders)
-
-		// Pass in the canvas resolution so we can convert from pixels to clipspace in the shader
-		const resolutionLocation = gl.getUniformLocation(program, "u_resolution");
-		gl.uniform2f(resolutionLocation, canvas.width, canvas.height);
-
-		// Tell the shader to get the texture from texture unit 0
-		const imageLocation = gl.getUniformLocation(program, "u_image");
-		gl.uniform1i(imageLocation, 0);
-// gl.uniform2i(imageLocation, [0, 0]); // для usampler2D
-
-		// Bind the position buffer so gl.bufferData that will be called in setRectangle puts data in the position buffer
-		gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+		this.textureInfos = [];
 	}
 
-	Render(opt) { // отрисовка тайла
-		const {gl, program} = this;
-		const {ndarray, tSize, dx = 0, dy = 0} = opt;
-		if (!tSize) {
-			return;	// TODO: по строкам изображения
-		}
+	draw(opt) {
+ 		const {gl, canvas, vpShift} = this;
+		webglUtils.resizeCanvasToDisplaySize(canvas);
+
+ 		gl.viewport(0, 0, canvas.width, canvas.height);   // Tell WebGL how to convert from clip space to pixels
+ 		// gl.viewport(-vpShift[0], -vpShift[1], canvas.width, canvas.height);   // Tell WebGL how to convert from clip space to pixels
+ 		// gl.viewport(-vpShift[0], -vpShift[1], canvas.width + vpShift[0], canvas.height + vpShift[1]);   // Tell WebGL how to convert from clip space to pixels
+ 		// gl.viewport(vpShift[0], vpShift[1], rect[2], rect[3]);   // Tell WebGL how to convert from clip space to pixels
+    gl.clear(gl.COLOR_BUFFER_BIT);
+		let that = this;
+		this.textureInfos.forEach(function(drawInfo) {
+			if (!drawInfo.texture) return;
+		  that.drawImage(
+			drawInfo.texture,
+			drawInfo.width,
+			drawInfo.height,
+			drawInfo.x,
+			drawInfo.y
+			);
+		});
+	}
+	
+	_setTex(opt) { // текстура по ndarray
+		const {gl, program, canvas} = this;
+		let {ndarray, tSize, dx = 0, dy = 0, num} = opt;
+
+		let mipMapping = qualityOptions.mipMapping;
+		const imageSize = this.tags.imageSize;			// размеры tiff
 		const {width, height} = tSize || {};			// размеры тайла
 		const bitmapType = ndarray.constructor.name;	// тип ndarray
 		const bitmapChanels = ndarray.length / (width * height);	// сколько каналов
@@ -117,30 +148,54 @@ var color_buffer_float_16ui = gl.getExtension('EXT_color_buffer_float'); // add 
 			srcType: gl.UNSIGNED_BYTE, // type of data we are supplying
 		};
 		let {internalFormat, srcFormat, srcType} = DefPars;
+// console.log("bitmapType", bitmapType, bitmapChanels);
 		switch(bitmapType) {
 			case 'Uint8Array':
 				if (bitmapChanels === 3) {
+				mipMapping = false;
 					internalFormat = gl.RGB8;
 					srcFormat = gl.RGB;
-					// gl.pixelStorei( gl.UNPACK_ALIGNMENT, 1);
-
 				}
 				break;
 			case 'Uint16Array':
 				if (bitmapChanels === 1) {
-	// gl.pixelStorei( gl.UNPACK_ALIGNMENT, 1);
-					internalFormat = gl.R16UI;
-					srcFormat = gl.RED_INTEGER;
-					srcType = gl.UNSIGNED_SHORT;
+
+	gl.pixelStorei( gl.UNPACK_ALIGNMENT, 1);
+	// gl.enable(gl.SCISSOR_TEST);
+	// gl.scissor(0, 0, 200, 200);
+				mipMapping = false;
+				let max = 0, min = 0;
+					// ndarray1 = new Float32Array(ndarray.length).fill(1);
+					ndarray = new Float32Array(ndarray.map(v => {
+						let t = v / 65535;
+						max = Math.max(max, t);
+						min = Math.min(min, t);
+						return t;
+					}));
+// console.log("bitmapType", max,min);
+					// ndarray1.forEach((v, i) => ndarray1[i] = v / 32768);
+					// ndarray = ndarray1;
+
+					internalFormat = gl.R32F;
+					srcFormat = gl.RED;
+					srcType = gl.FLOAT;
 				}
 				break;
 			case 'Float32Array':
-				// mipMapping = false;
-				// internalFormat = gl.RGBA32F;
-				// format = gl.RGBA;
-				// type = gl.FLOAT;
+				mipMapping = false;
+				if (bitmapChanels === 1) {
+			// gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F,  width, height, 0, gl.RED, gl.FLOAT, bitmap.fArr);
+					internalFormat = gl.R32F;
+					srcFormat = gl.RED;
+					srcType = gl.FLOAT;
+				} else {
+					internalFormat = gl.RGBA32F;
+					srcFormat = gl.RGBA;
+					srcType = gl.FLOAT;
+				}
 				break;
 		}
+		// gl.bindTexture(gl.TEXTURE_2D, textureInfo.texture);
 		gl.texImage2D(gl.TEXTURE_2D,
 			0,										// the largest mip
 			internalFormat,							// format we want in the texture
@@ -151,68 +206,105 @@ var color_buffer_float_16ui = gl.getExtension('EXT_color_buffer_float'); // add 
 			ndarray									// ndarray картинки
 		);
 
-		glUtils.setRectangle(gl, 0, 0, width, height);	// Set a rectangle the same size as the image.
-	   
-		var matrixLocation = gl.getUniformLocation(program, "u_matrix");
-		gl.uniformMatrix3fv(matrixLocation, false, [		// Set the matrix.
-		  1,	0,	0,
-		  0,	1,	0,
-		  dx,	dy, 1,
-		]);
-		gl.drawArrays(gl.TRIANGLES, 0, 6);		// Draw the rectangle.
-		// gl.flush();		// очищает команды буфера.
 	}
+	
+	Render(opt) { // отрисовка тайла
+		const {gl, program, canvas} = this;
+		let {ndarray, tSize, dx = 0, dy = 0, num} = opt;
+		if (!tSize) {
+		// if (!tSize || num > 12) {
+			return;	// TODO: по строкам изображения
+		}
+	
+		const tex = gl.createTexture();
+		gl.bindTexture(gl.TEXTURE_2D, tex);
+
+		gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE,
+                  new Uint8Array([0, 0, 255, 255]));    // Fill the texture with a 1x1 blue pixel.
+
+		// let's assume all images are not a power of 2
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+
+		// gl.bindTexture(gl.TEXTURE_2D, tex);
+		this._setTex(opt);
+		this.textureInfos.push({
+		  width: tSize.width,
+		  height: tSize.height,
+		  x: dx,
+		  y: dy,
+		  texture: tex,
+		});
+
+// console.log('__ onTile __', num, ndarray);
+		// this.drawTile(opt);
+	}
+
+  
+  // Unlike images, textures do not have a width and height associated
+  // with them so we'll pass in the width and height of the texture
+	drawImage(tex, texWidth, texHeight, dstX, dstY) {
+ 		const {gl, program, canvas, vpShift, vpPos} = this;
+		gl.bindTexture(gl.TEXTURE_2D, tex);
+
+		gl.useProgram(program);    // Tell WebGL to use our shader program pair
+
+    // Setup the attributes to pull data from our buffers
+		gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer);
+		gl.enableVertexAttribArray(this.positionLocation);
+		gl.vertexAttribPointer(this.positionLocation, 2, gl.FLOAT, false, 0, 0);
+		
+		gl.bindBuffer(gl.ARRAY_BUFFER, this.texcoordBuffer);
+		gl.enableVertexAttribArray(this.texcoordLocation);
+		gl.vertexAttribPointer(this.texcoordLocation, 2, gl.FLOAT, false, 0, 0);
+
+    // this matrix will convert from pixels to clip space
+		let matrix = m4.orthographic(0, gl.canvas.width, gl.canvas.height, 0, -1, 1);
+let scale = this.vpScale;
+		const dx = scale * (dstX - vpShift[0] - vpPos[0]);
+		const dy = scale * (dstY - vpShift[1] - vpPos[1]);
+		const w = scale * texWidth;
+		const h = scale * texHeight;
+		if (dx < 0) {
+ // console.warn('__resize__', dx, dy, texWidth, texHeight, dstX, dstY);
+		}
+
+    // this matrix will scale our 1 unit quad
+    // from 1 unit to texWidth, texHeight units
+		matrix = m4.translate(matrix, dx, dy, 0);    // this matrix will translate our quad to dstX, dstY
+		matrix = m4.scale(matrix, w, h, 1);
+		gl.uniformMatrix4fv(this.matrixLocation, false, matrix);    // Set the matrix.
+
+		gl.uniform1i(this.textureLocation, 0);    // Tell the shader to get the texture from texture unit 0
+
+		gl.drawArrays(gl.TRIANGLES, 0, 6);    // draw the quad (2 triangles, 6 vertices)
+  }
 
 }
 
-const vss = `#version 300 es
-	in vec2 a_position;			// an attribute is an input (in) to a vertex shader.
-	in vec2 a_texCoord;			// It will receive data from a buffer
-	uniform vec2 u_resolution;	// Used to pass in the resolution of the canvas
-	out vec2 v_texCoord;		// Used to pass the texture coordinates to the fragment shader
-	uniform mat3 u_matrix;		// A matrix to transform the positions by
+const vss = `
+	attribute vec4 a_position;
+	attribute vec2 a_texcoord;
+	uniform mat4 u_matrix;
+
+	varying vec2 v_texcoord;
 
 	void main() {
-		vec2 position = (u_matrix * vec3(a_position, 1)).xy;	// Multiply the position by the matrix.
-		vec2 zeroToOne = position / u_resolution;				// convert the position from pixels to 0.0 to 1.0
-		vec2 zeroToTwo = zeroToOne * 2.0;						// convert from 0->1 to 0->2
-		vec2 clipSpace = zeroToTwo - 1.0;						// convert from 0->2 to -1->+1 (clipspace)
-
-		gl_Position = vec4(clipSpace * vec2(1, -1), 0, 1);
-		  // pass the texCoord to the fragment shader
-		  // The GPU will interpolate this value between points.
-		v_texCoord = a_texCoord;
+	   gl_Position = u_matrix * a_position;
+	   v_texcoord = a_texcoord;
 	}
 `;
 
-const fss = `#version 300 es
-	precision highp float;
+const fss = `
+	precision mediump float;
 
-	uniform sampler2D u_image;		// our texture
-	in vec2 v_texCoord;				// the texCoords passed in from the vertex shader.
-	out vec4 outColor;				// we need to declare an output for the fragment shader
+	varying vec2 v_texcoord;
 
-	void main() {
-	  outColor = texture(u_image, v_texCoord);
-	}
-`;
-
-const fss16 = `#version 300 es
-	precision highp float;
-
-	// uniform sampler2D u_image;		// our texture
-	uniform highp usampler2D u_image;		// our texture
-	in vec2 v_texCoord;				// the texCoords passed in from the vertex shader.
-	out vec4 outColor;				// we need to declare an output for the fragment shader
+	uniform sampler2D u_texture;
 
 	void main() {
-		uvec4 unsignedIntValues = texture(u_image, v_texCoord);
-		float v = float(unsignedIntValues[0]) / 65535.0;
-		vec4 floatValues0To65535 = vec4(v, v, v, 1.0);
-		// vec4 colorValues0To1 = floatValues0To65535 / 65535.0;
-		outColor = floatValues0To65535;
-		
-		// outColor = vec4(texture(u_image, v_texCoord)) / 65535.0;
-	  // outColor = texture(u_image, v_texCoord);
+	   gl_FragColor = texture2D(u_texture, v_texcoord);
 	}
+
 `;
