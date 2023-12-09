@@ -49,4 +49,7 @@ document.addEventListener('wheel', (e) => {
 });
 
 // fetchTiff('./data/LC08_L1TP_111025_20180927_20181009_01_T1_sr_band5.tif', options);
-fetchTiff('./data/B_RGB.tif', options);
+// fetchTiff('./data/Карта_тестовых_слоёв_mail.ru.tiff', options);
+// fetchTiff('./data/B_RGB.tif', options);
+fetchTiff('./data/33.tif', options);
+// fetchTiff('./data/atlas_south.tif', options);

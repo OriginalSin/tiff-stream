@@ -10,18 +10,23 @@ export default class TilesConcat {
 	constructor(options) {
 		const { canvas, maxSize = {}, programs = [] } = options;
 		
-		// canvas.width = options.ImageWidth;
-		// canvas.height = options.ImageLength;
-		// canvas.width = maxSize.width || options.ImageWidth;
-		// canvas.height = maxSize.height || options.ImageLength;
 		const gl = canvas.getContext("webgl2", contextOpt);	// Get A WebGL context
 		this.gl = gl;
 		this.canvas = canvas;
 		this.tags = options;
- console.warn('__constructor__', options);
+		this.progs = {
+			tBound: this._setTileBoundsProg(),
+		};
 
-		const program = webglUtils.createProgramFromSources(this.gl, [vss, fss]);
-		this.program = program
+		let tfShader = texShader.f;
+		if (options.ColorMap) {
+			tfShader = getColorMapShader(options.ColorMap);
+			// console.warn('__colorMapShader__', tfShader);
+		}
+
+
+		const program = webglUtils.createProgramFromSources(this.gl, [texShader.v, tfShader]);
+		this.program = program;
 
 		// look up where the vertex data needs to go.
 		this.positionLocation = gl.getAttribLocation(program, "a_position");
@@ -31,7 +36,7 @@ export default class TilesConcat {
 		this.matrixLocation = gl.getUniformLocation(program, "u_matrix");
 		this.textureLocation = gl.getUniformLocation(program, "u_texture");
 
-		this.init();
+		this._init();
 		this.vpScale = 1; // зум viewport
 		this.vpPos = [0, 0]; // смещение viewport
 		this.vpShift = [0, 0]; // текущее смещение viewport
@@ -40,7 +45,7 @@ export default class TilesConcat {
 		
 		const onMess = (event) => {
 			const { type, canvas, pos = [0,0], scale} = event.data;
-		// console.log('onMess', type, shift, event)
+		// console.log('onMess', type, scale, pos)
 			if (scale) this.vpScale = scale;
 			if (type === 'drag') {
 				const [px, py] = pos;
@@ -58,12 +63,12 @@ export default class TilesConcat {
 			// if (py <= maxy && py >= 0) this.vpShift[1] = py;
 		};
 		self.addEventListener("message", onMess.bind(this), false);
-		requestAnimationFrame(this.autoFrame.bind(this));
+		requestAnimationFrame(this._autoFrame.bind(this));
 	}
 
-    autoFrame(time) {
-		this.draw();
-		requestAnimationFrame(this.autoFrame.bind(this));
+    _autoFrame(time) {
+		this._draw();
+		requestAnimationFrame(this._autoFrame.bind(this));
 	}
 
     resize(screen) {
@@ -73,7 +78,25 @@ export default class TilesConcat {
  console.warn('__resize__', canvas.width, this.gl.canvas.width, twgl.m4);
 	}
 
-    init() {
+    _setTileBoundsProg() {
+		const {gl} = this;
+		const p = webglUtils.createProgramFromSources(this.gl, [tBoundShader.v, tBoundShader.f]);
+
+		const tBound = {
+			p,
+			position: gl.getAttribLocation(p, 'position'),
+			normal: gl.getAttribLocation(p, 'normal'),
+			miter: gl.getAttribLocation(p, 'miter'),
+			
+			projection: gl.getUniformLocation(p, 'projection'),
+			model: gl.getUniformLocation(p, 'model'),
+			view: gl.getUniformLocation(p, 'view'),
+			thickness: gl.getUniformLocation(p, 'thickness'),
+		};
+		return tBound;
+	}
+
+    _init() {
 		const {gl} = this;
 		// const canvas = this.canvas;
 		
@@ -111,7 +134,7 @@ export default class TilesConcat {
 		this.textureInfos = [];
 	}
 
-	draw(opt) {
+	_draw(opt) {
  		const {gl, canvas, vpShift} = this;
 		webglUtils.resizeCanvasToDisplaySize(canvas);
 
@@ -119,18 +142,13 @@ export default class TilesConcat {
  		// gl.viewport(-vpShift[0], -vpShift[1], canvas.width, canvas.height);   // Tell WebGL how to convert from clip space to pixels
  		// gl.viewport(-vpShift[0], -vpShift[1], canvas.width + vpShift[0], canvas.height + vpShift[1]);   // Tell WebGL how to convert from clip space to pixels
  		// gl.viewport(vpShift[0], vpShift[1], rect[2], rect[3]);   // Tell WebGL how to convert from clip space to pixels
-    gl.clear(gl.COLOR_BUFFER_BIT);
+		gl.clear(gl.COLOR_BUFFER_BIT);
 		let that = this;
-		this.textureInfos.forEach(function(drawInfo) {
+		this.textureInfos.forEach(function(drawInfo) {	// перерисовка тектур
 			if (!drawInfo.texture) return;
-		  that.drawImage(
-			drawInfo.texture,
-			drawInfo.width,
-			drawInfo.height,
-			drawInfo.x,
-			drawInfo.y
-			);
+			that._drawImage(drawInfo.texture, drawInfo.width, drawInfo.height, drawInfo.x, drawInfo.y );
 		});
+		this._drawTilesGrid(this.progs.tBound);
 	}
 	
 	_setTex(opt) { // текстура по ndarray
@@ -151,8 +169,14 @@ export default class TilesConcat {
 // console.log("bitmapType", bitmapType, bitmapChanels);
 		switch(bitmapType) {
 			case 'Uint8Array':
-				if (bitmapChanels === 3) {
-				mipMapping = false;
+				if (bitmapChanels === 1) {
+					mipMapping = false;
+					// internalFormat = gl.RGB8; srcFormat = gl.RGB;
+					// internalFormat = gl.RGB8; srcFormat = gl.RGB;
+					// internalFormat = gl.R8_SNORM; srcFormat = gl.RED; srcType = gl.BYTE;
+					internalFormat = gl.R8; srcFormat = gl.RED;
+				} else if (bitmapChanels === 3) {
+					mipMapping = false;
 					internalFormat = gl.RGB8;
 					srcFormat = gl.RGB;
 				}
@@ -241,10 +265,15 @@ export default class TilesConcat {
 		// this.drawTile(opt);
 	}
 
-  
+	_drawTilesGrid(prog) {
+ 		const {gl, canvas, vpShift, vpPos} = this;
+		
+ // console.warn('_drawTilesGrid', vpShift, vpPos);
+	}
+
   // Unlike images, textures do not have a width and height associated
   // with them so we'll pass in the width and height of the texture
-	drawImage(tex, texWidth, texHeight, dstX, dstY) {
+	_drawImage(tex, texWidth, texHeight, dstX, dstY) {
  		const {gl, program, canvas, vpShift, vpPos} = this;
 		gl.bindTexture(gl.TEXTURE_2D, tex);
 
@@ -283,28 +312,99 @@ let scale = this.vpScale;
 
 }
 
-const vss = `
-	attribute vec4 a_position;
-	attribute vec2 a_texcoord;
-	uniform mat4 u_matrix;
 
-	varying vec2 v_texcoord;
+const tBoundShader = {
+	v: `#version 300 es
+		precision highp float;
 
+		in vec2 position;
+		in vec2 normal;
+		in float miter; 
+		uniform mat4 projection;
+		uniform mat4 model;
+		uniform mat4 view;
+		uniform float thickness;
+		out float edge;
+
+		void main() {
+		  edge = sign(miter);
+		  vec2 pointPos = position.xy + vec2(normal * thickness/2.0 * miter);
+		  gl_Position = projection * view * model * vec4(pointPos, 0.0, 1.0);
+		  gl_PointSize = 1.0;
+		}
+	`,
+	f: `#version 300 es
+		precision highp float;
+
+		uniform vec3 color;
+		uniform float inner;
+		in float edge;
+
+		// const vec3 color2 = vec3(0.8);
+
+		out vec4 outColor;
+		void main() {
+		  float v = 1.0 - abs(edge);
+		  v = smoothstep(0.65, 0.7, v*inner); 
+		  outColor = mix(vec4(color, 1.0), vec4(0.0), v);
+		}
+	`,
+};
+
+
+const fMain = `
 	void main() {
-	   gl_Position = u_matrix * a_position;
-	   v_texcoord = a_texcoord;
+	   outColor = texture(u_texture, v_texcoord);
 	}
 `;
+const texShader = {
+	v: `#version 300 es
+		precision highp float;
 
-const fss = `
-	precision mediump float;
+		in vec4 a_position;
+		in vec2 a_texcoord;
+		uniform mat4 u_matrix;
 
-	varying vec2 v_texcoord;
+		out vec2 v_texcoord;
 
-	uniform sampler2D u_texture;
+		void main() {
+		   gl_Position = u_matrix * a_position;
+		   v_texcoord = a_texcoord;
+		}
+	`,
+	f: `#version 300 es
+		precision highp float;
 
-	void main() {
-	   gl_FragColor = texture2D(u_texture, v_texcoord);
+		in vec2 v_texcoord;
+
+		uniform sampler2D u_texture;
+
+		out vec4 outColor;				// we need to declare an output for the fragment shader
+${fMain}
+	`
+};
+const getColorMapShader = function(cm) {
+	const gs = cm.length / 3, bs = gs * 2;
+	let out = [];
+	let vec4p = [cm[0] >> 8, cm[gs] >> 8, cm[bs] >> 8, 255];
+	for (let i = 0; i < gs; i++) {
+		let vec4 = [cm[i] >> 8, cm[i + gs] >> 8, cm[i + bs] >> 8, 255];
+		if (vec4[0] !== vec4p[0] || vec4[1] !== vec4p[1] || vec4[2] !== vec4p[2]) {
+			out.push(`${out.length ? 'else ':''}if (v < float(${i / 255})) return vec4(${vec4p.map(v => v / 255).join(', ') + '.'});`);
+			vec4p = vec4;
+		}
 	}
+	out.push(`return vec4(${vec4p.map(v => v / 255).join('., ') + '.'});`);
+	out.unshift('vec4 colorMap(float v) {');
+	out.push('}');
 
-`;
+	let str = texShader.f;
+	str = str.replace(fMain, `
+		${out.join('\n')}
+	void main() {
+	   vec4 tColor = texture(u_texture, v_texcoord);
+	   outColor = colorMap(tColor[0]);
+	}
+	`);
+	return str;
+}

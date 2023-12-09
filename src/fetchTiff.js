@@ -44,8 +44,10 @@ window.test = IndDB;
     }
 	close = () => {											// Called when the stream is closed.
 		console.timeEnd('TiffUnpacked');
+ 		this.tiffUnpacker.streamClosed();
 	}
 	write(chunk, controller) {
+// console.log("uint8Array:  ", chunk.length, chunk);
  		this.tiffUnpacker.addBinaryData(chunk);		// Called when a chunk is read.
     }
 	transform(chunk, controller) {

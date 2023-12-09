@@ -1,8 +1,8 @@
 /**
  * This file contains a TiffUnpacker.
  */
-import { fieldTagNames } from './globals.js';
-import geoKeyDirectory from './geoKeyDirectory.js';
+import { getTags } from './tifUtils.js';
+import pako from './pako.esm.js';
 
 
 /**
@@ -10,7 +10,7 @@ import geoKeyDirectory from './geoKeyDirectory.js';
  */
 export class TiffUnpacker {
 	constructor(opt = {}) {
-		this.data = new Uint8Array(0);
+		// this.data = new Uint8Array(0);
 		this.minBuf = 64 * 1024;
 		this.onTags = opt.onTags;
 		this.onTile = opt.onTile;
@@ -18,224 +18,257 @@ export class TiffUnpacker {
 		this.onClose = null;
 		// this.num = 0;				
 		this.tileCount = 0;		// текущий номер тайла
+		this._shiftPos = 0;		// текущий index обработанного байта
+		this._restPos = 0;		// текущий остаток данных
+		this.chunks = [];		// массив полученных chunk-оф
+// console.log("constructor:  ", this.chunks.length, this.tileInd, this.data);
 		if (opt.chunk instanceof Uint8Array) this.addBinaryData(opt.chunk);
 	}
+  
+  /**
+   * Установка Флага получения тайлов
+   */
+	setReadyTiles(flag) {
+		if (!this.readyTiles) this.checkForChunks(2);
+		this.readyTiles = flag;
+	}
 
+	streamClosed() {
+		if (!this.tags) { // Получение описания TIFF
+console.log("streamClosed:  ", this.chunks.length, this.tileInd, this.data);
+			this._parseTags();
+			this.checkForChunks(11);
+		}
+		// requestAnimationFrame(this.checkForChunks.bind(this));
+	}
   /**
    * Adds more binary data to unpack.
    *
    * @param {Uint8Array} uint8Array The data to add.
    */
 	addBinaryData(uint8Array) {
-// console.log("addBinaryData", this.position, this.data.length, uint8Array.length);
-		const newData = new Uint8Array(this.data.length + uint8Array.length);
-		newData.set(this.data, 0);
-		newData.set(uint8Array, this.data.length);
-		this.data = newData;
-
-		this.checkForChunks();
+console.log("addBinaryData", this.tags, uint8Array.length);
+		this.chunks.push(uint8Array);
+		if (!this.data) {
+			this.data = new Uint8Array(0);
+		}
+		if (!this.tags) { // Получение описания TIFF
+			this._nextChunkConcat();
+			if (this.data.length < this.minBuf) return;	// chunk маленький - ожидаем пополнения
+			this._parseTags();
+		}
+		this.checkForChunks(1);
 	}
-  
-  /**
-   * Получение описания TIFF.
-   */
-	checkTiffTags(dataView) {
-		if (this.NotTiff || dataView.byteLength < 1024) { // chunk маленький либо это не TIFF
-			return;
-		}
-		const LE = this.LE = dataView.getUint16(0) === 18761 ? true : false; // file as little endian format if format species it in memory
-		const magicNumber = dataView.getUint16(2, LE);
-		if (magicNumber !== 42 && magicNumber !== 43) {
-			this.NotTiff = true;
-			console.error({ identity: magicNumber, Compression: "Not Tif" });
-			return;
-		}
-		const tags = {};
-		const bigTiff = this.bigTiff = magicNumber === 42 ? false : true;
-		const entrySize = bigTiff ? 20 : 12, offsetSize = bigTiff ? 8 : 2, byteRange = bigTiff ? 8 : 4;
 
-		let offset = 8, offsetByteSize = 0;
-		let firstIFDOffset = dataView.getUint32(16, LE); //a32[4];
-		if (bigTiff) {
-			offsetByteSize = dataView.getUint16(8, LE); //a16[4];
-			if (offsetByteSize !== 8) {
-				throw new Error('Unsupported offset byte-size.');
-			}
-			firstIFDOffset = dataView.getUint64(8, LE);
-		}
-		const a8 = this.data;
-		// const a16 = new Uint16Array(a8.buffer, 32 * 1024);
-		// const a32 = new Uint32Array(a8.buffer, 16 * 1024);
-		const getFieldValues = (data) => {
-			const {tagName, valueOffset, fLength, typeCount, bigTiff, read_order} = data;
-			let val = dataView.getUint16(valueOffset, LE); // по умолчанию
-			if (fLength * typeCount > byteRange) { 	// resolve the reference to the actual byte range
-				let actualOffset = bigTiff ? dataView.getUint64(valueOffset, LE) : val;
+	_parseTags() {
+		let tags = getTags(this.data);
+		if (!tags) return;
+		if (!tags.error) {
+			this.tags = tags;
+			if (this.onTags) this.onTags(tags);
+			this._shift = tags._nextPos;
+			this._strips = (tags.isTiled ? tags.TileByteCounts : tags.StripByteCounts).map((cnt, i) => {
+				return {
+					pos: (tags.isTiled ? tags.TileOffsets : tags.StripOffsets)[i],
+					cnt
+				}; 
+			});
+			this.setReadyTiles(true);
 
-				const nm = actualOffset / fLength;
-				if (tagName === 'TileByteCounts' || tagName === 'TileOffsets') {
-					console.log("tagName", tagName, fLength);
-				}
-				if (fLength === 8) {
-					val = new Array(typeCount).fill(1).map((v, i) => { return dataView.getFloat64(actualOffset + i * fLength, LE); });
-				} else if (fLength === 1) { // Ascii
-					val = new TextDecoder('utf-8').decode(a8.slice(nm, nm + typeCount));
-				} else if (fLength === 2) {
-					val = new Array(typeCount).fill(1).map((v, i) => { return dataView.getUint16(actualOffset + i * fLength, LE); });
-					// val = Array.from(a16.slice(nm, nm + typeCount));
-				} else if (fLength === 4) {
-					val = new Array(typeCount).fill(1).map((v, i) => { return dataView.getUint32(actualOffset + i * fLength, LE); });
-					// val = Array.from(a32.slice(nm, nm + typeCount));
-				}
-			}
-			return val;
-		}
 
-		let dpos = dataView.getUint32(4, LE);
-		let i = offset + (bigTiff ? 8 : 2);
-		const numDirEntries = dataView.getUint16(dpos, LE);
-		for (let entryCount = 0; entryCount < numDirEntries; i += entrySize, ++entryCount) {
-			let x = dpos + offsetSize + entrySize * entryCount;
-			const tag_ = dataView.getUint16(x, LE);
-			const tagName = fieldTagNames[tag_];
-			
-			const valueOffset = i + (bigTiff ? 12 : 8);
-			const fieldType = dataView.getUint16(i + 2, LE);
-			const typeCount = bigTiff ? dataView.getUint64(i + 4, LE) : dataView.getUint16(i + 4, LE);
-			let fLength = 2;
-			
-			let fieldValues;// = dataView.getUint16(valueOffset, LE); // по умолчанию
-			let attr = {tagName, valueOffset, fLength, typeCount, bigTiff};
-if (tagName === 'TileByteCounts' || tagName === 'TileOffsets') {
-	// console.log("fieldType", tagName, fieldType, fLength, tags.BitsPerSample);
-}
-			switch(fieldType) {
-				case 2:
-					fieldValues = getFieldValues({...attr, fLength: 1});
-					break;
-				case 4:
-					// if (tags.BitsPerSample.length === 3) fLength = 4;
-					// else if (tags.BitsPerSample.length === 4) fLength = 8;
-					fieldValues = getFieldValues({...attr, fLength: 4});
-					break;
-				case 12:	// getFloat64
-					fieldValues = getFieldValues({...attr, fLength: 8});
-					break;
-				default:
-					fieldValues = getFieldValues(attr);
-					break;
-			}
-			tags[tagName] = fieldValues;
-		}
-		tags.geoKeyDirectory = geoKeyDirectory(tags);
-		tags.isTiled = tags.TileByteCounts;
-		// tags.isTiled = !tags.StripOffsets;
-		if (tags.isTiled) {
-			this.position = tags.TileByteCounts[0];
-			this.data = this.data.slice(tags.TileOffsets[0], this.data.length);
-			tags.tilesConf = {
-				tSize: {width: tags.TileWidth, height: tags.TileLength},
-				colCount: Math.sqrt(tags.TileByteCounts.length)
-			};
 		} else {
-			this.position = tags.StripByteCounts[0];
-			this.minBuf = this.position;
-			this.data = this.data.slice(tags.StripOffsets[0], this.data.length);
-			tags.tilesConf = {
-				tSize: {width: tags.ImageWidth, height: 1},
-				colCount: 1
-			};
-
-			// let rstrip = Math.min(tags.RowsPerStrip, tags.ImageLength);
-			// let ww = tags.ImageWidth;
-// console.warn("TODO: необходимо еще разобраться с ключами tags.StripOffsets и tags.StripByteCounts ", tags);
-// return;
+			console.error("getTags:  ", this.data.length, tags);
 		}
+	}
 
+	_nextChunkConcat() {
+		const nChunk = this.chunks.shift();
+		if (nChunk) {
+			const clen = this.data.length;
+			// const rest = this.data.subarray(clen);
+			const newData = new Uint8Array(clen + nChunk.length);
+			newData.set(this.data);	// остаток данных
+			newData.set(nChunk, clen);
+			this.data = newData;
+		}
+	}
+	_checkDataSize(nextPos) {
+		if (!this.readyTiles) return;
 
-		this.tags = tags;
-		if (this.onTags) this.onTags(tags);
+		const len = this.data.length;
+		const min = nextPos || this.minBuf;
+		if (len < min - this._shiftPos) {	// chunk маленький - ожидаем пополнения
+			this._nextChunkConcat();
+			return;
+		}
+		return true;
+	}
+
+	_nextChunk() {
+		const nChunk = this.chunks.shift();
+		if (nChunk) {
+			const rpos = this._restPos;
+			
+			this._shiftPos += rpos;
+			const rest = this.data.subarray(rpos);
+			const newData = new Uint8Array(rest.length + nChunk.length);
+			newData.set(rest);	// остаток данных
+			newData.set(nChunk, rest.length);
+			this.data = newData;
+			this.checkForChunks(3);
+		}
+	}
+	_getLastInd() {
+		let {_shift, _shiftPos = 0} = this;
+		let size = this.data.length - _shift + _shiftPos;
+		let lastInd = this._strips.findLastIndex(v => {
+			return v.pos + v.cnt < size;
+		});
+
+		return lastInd + 1;
+	}
+	_getChunkTiles(tileInd, lastInd) {
+		let {tags, _shift, _shiftPos = 0} = this;
+		let {isTiled, TileByteCounts, TileOffsets, Compression} = tags;
+		if (!isTiled || !this.data) return;
+
+		const {tSize, colCount} = tags.tilesConf;
+		const {width, height} = tSize;
+		const buf = this.data.buffer;
+
+		for (let i = tileInd; i < lastInd; i++) {
+			let strip = this._strips[i];
+			let {pos, cnt} = strip;
+			let b = pos - _shiftPos;
+
+			const ndarray = this.data.subarray(b, b + cnt);
+
+			const dx = width * (i % colCount);
+			const dy = height * Math.floor(i / colCount);
+			if (this.onTile) this.onTile({ ndarray, tSize, dx, dy, num: i });
+		}
+		this._shift = 0;
+		this.tileInd = lastInd;
+		if (TileOffsets[lastInd]) {
+			this._restPos = TileOffsets[lastInd] - _shiftPos;
+			this._nextChunk();
+			// requestAnimationFrame(this.checkForChunks.bind(this));
+		} else {
+			// this.data = undefined;
+		}
+	}
+	_getChunkStrips(tileInd, lastInd) {
+		let {tags, _shift, _shiftPos = 0} = this;
+		let {isTiled, StripOffsets, Compression, BitsPerSample, RowsPerStrip, ColorMap} = tags;
+		if (isTiled || !this.data) return;
+
+		let {tSize, colCount} = tags.tilesConf;
+		let {width, height} = tSize;
+
+		// let _stripWidth = tags.imageSize.width * RowsPerStrip * (Array.isArray(BitsPerSample) ? BitsPerSample.length : BitsPerSample);
+		let _stripWidth = tags.imageSize.width * RowsPerStrip;
+		let tStripNum = lastInd - tileInd;
+		const ndarray = new Uint8Array(tStripNum * _stripWidth);
+
+		for (let i = tileInd; i < lastInd; i++) {
+			let strip = this._strips[i];
+			let {pos, cnt} = strip;
+			let b = pos - _shiftPos;
+			// let b = pos - _shiftPos;
+			// _shiftPos = _shift;
+
+			const arr = this.data.subarray(b, b + cnt);
+if (arr[0] !== 120) {
+// if (i > 4) {
+debugger
+console.warn("bb:  ", tileInd, lastInd, strip.cnt, this.data.length);
+}
+			const arr1 = Compression === 1 ? arr : pako.ungzip(arr);
+/*
+if (ColorMap) {
+  const greenOffset = ColorMap.length / 3;
+  const blueOffset = ColorMap.length / 3 * 2;
+  arr1.forEach(v => {
+	let r = ColorMap[v] / 65536 * 256;
+	let g = ColorMap[v + greenOffset] / 65536 * 256;
+	let b = ColorMap[v + blueOffset] / 65536 * 256;
+	let out = [r, g, b];
+if (r) {
+debugger
+}
+  });
+}
+
+export function fromPalette(raster, colorMap) {
+  const { width, height } = raster;
+  const rgbRaster = new Uint8Array(width * height * 3);
+  const greenOffset = colorMap.length / 3;
+  const blueOffset = colorMap.length / 3 * 2;
+  for (let i = 0, j = 0; i < raster.length; ++i, j += 3) {
+    const mapIndex = raster[i];
+    rgbRaster[j] = colorMap[mapIndex] / 65536 * 256;
+    rgbRaster[j + 1] = colorMap[mapIndex + greenOffset] / 65536 * 256;
+    rgbRaster[j + 2] = colorMap[mapIndex + blueOffset] / 65536 * 256;
+  }
+  return rgbRaster;
+}
+
+*/			
+			ndarray.set(arr1, _stripWidth * (i - tileInd));
+		}
+		const dx = 0;
+		const dy = tileInd;
+		tSize.height = tags.RowsPerStrip * ndarray.length / _stripWidth;
+		if (this.onTile) this.onTile({ ndarray, tSize, dx, dy, num: tileInd });
+
+		this._shift = 0;
+		this.tileInd = lastInd;
+		 
+		if (this._strips[lastInd]) {
+			this._restPos = this._strips[lastInd].pos - _shiftPos;
+			this._nextChunk();
+			// requestAnimationFrame(this.checkForChunks.bind(this));
+		} else {
+			// this.data = undefined;
+		}
 	}
 
   /**
    * Checks whether new chunks can be found within the binary data.
    */
-	checkForChunks() {
-		if (!this.position) this.position = 0;
-// console.warn("position:  ", this.data.length , this.minBuf);
-		if (this.data.length < this.minBuf) return;	// chunk маленький - ожидаем пополнения
-	
-		const dataView = new DataView(this.data.buffer, 0);
-		this.dataView = dataView;
-		let num = this.tileCount;
-	
-		if (!this.tags && this.position === 0) { // Получение описания TIFF
-// console.warn("position_10:  ", this.position, this.tags);
-			this.checkTiffTags(dataView);
-// console.warn("position_1:  ", this.position, this.tags);
-		} else if (num < this.tags[this.tags.isTiled ? 'TileOffsets' : 'StripOffsets'].length) { // Получение тайлов
-			const tags = this.tags;
-			let nextPos = tags.isTiled ? tags.TileOffsets[num] : tags.StripOffsets[num];
-			let nextCount = tags.isTiled ? tags.TileByteCounts[num] : tags.StripByteCounts[num];
-// console.warn("position_11111:  ", num, this.data.length, nextCount);
-			if (this.data.length < nextCount) return; // chunk маленький либо это не TIFF
+	checkForChunks(attr) {
+		if (!this.readyTiles || !this.data) return;
 
-			const pull = [];
-// console.warn("position_11:  ", num, this.data.length, this.position);
-			do {
-// console.warn("FFFFFFFFF___:  ", num, tags.isTiled);
-				if (tags.isTiled) {
-					const ndarray = new Uint8Array(this.data.buffer, 0, nextCount);
-					const tc = tags.tilesConf;
-					const tSize = tc.tSize;
-					const dx = tSize.width * (num % tc.colCount);
-					const dy = tSize.height * Math.floor(num / tc.colCount);
-					if (this.onTile) this.onTile({ ndarray, tSize, dx, dy, num });
-				} else {
-					const bps = tags.BitsPerSample;
-					if (tags.BitsPerSample === 16) {
-// if (tags.BitsPerSample === 16) {
+		let tags = this.tags;
+		let {isTiled, Compression} = tags;
+		let tileInd = this.tileInd || 0;
+		let strip = this._strips[tileInd];
+
+		if (strip === undefined) { // Все тайлы получены
+			console.warn("Все тайлы получены:  ", attr, tileInd, pako);
+			this.allTiles = true;
+			this.data = undefined;
+			return;
+		}
+		let lastInd = this._getLastInd();
+		if (lastInd === tileInd) lastInd++;	// только на последней полосе
+// if (tileInd > 60) {
+// debugger
+// console.warn("bb:  ", tileInd, lastInd, strip.cnt, this.data.length);
 // }
-						const ndarray = new Uint16Array(this.data.buffer, 0, nextCount / 2);
-						const dx = 0;
-						const dy = num;
-						const tc = tags.tilesConf;
-						const tSize = tc.tSize;
-						pull.push({ ndarray, tSize, dx, dy, num });
-						if (pull.length % 101 === 0) {
-							const outArr = new Uint16Array(ndarray.length * 100);
-							pull.pop();
-							pull.forEach((it, i) => {
-								let arr = it.ndarray;
-								outArr.set(arr, i * arr.length);
-							});
-							
-							// const outArr = new Uint16Array(pull.map(it => [...new Uint8Array(it.buffer)]).flat());
-						if (this.onTile) this.onTile({ ndarray: outArr, tSize: {width: tSize.width, height: 100} , dx, dy: num - 100, num: num - 100 });  // одна строка изображения
-							// const outArr = new Uint16Array(pull.map(it => [...new Uint8Array(it.buffer)]).flat());
-							// pull.forEach({ ndarray, dx, dy, num });
-							pull.length = 0;
-// console.warn("TODO:  ", num, this.data.length);
-						}
-						if (this.onTile) this.onTile({ ndarray, tSize, dx, dy, num });  // одна строка изображения
-					}
-					
-				}
-				this.data = this.data.slice(nextCount, this.data.length);
-				this.position = 0;
-				num++;
-				nextCount = tags.isTiled ? tags.TileByteCounts[num] : tags.StripByteCounts[num];
-				nextPos = tags.isTiled ? tags.TileOffsets[num] : tags.StripOffsets[num];
-// console.warn("FFFFFFFFF:  ", num, this.position, nextCount, nextPos, this.data.length);
-			} while(this.data.length > nextCount)
-				
-// console.warn("position_111:  ", num, this.data, this.position);
-			if (pull.length) {
-				let tt = pull.length;
-			}
-			this.tileCount = num;
-		} else {
-console.warn("position_2:  ", num, this.tags);
+		let {pos, cnt} = strip;
+		let nextPos = pos + cnt;
+		// let nextPos = pos + cnt - this._shiftPos;
+		if (!this._checkDataSize(nextPos)) {	// chunk маленький - ожидаем пополнения
+// console.warn("bb:  ", tileInd, lastInd, strip.cnt, this.data.length);
+			requestAnimationFrame(this.checkForChunks.bind(this));
+			return;
+		}
+
+		if (isTiled) {	// По тайлам
+			this._getChunkTiles(tileInd, lastInd);
+		} else { 		// По полосам
+			this._getChunkStrips(tileInd, lastInd);
 		}
 	}
 }
