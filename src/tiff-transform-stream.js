@@ -47,7 +47,7 @@ console.log("streamClosed:  ", this.chunks.length, this.tileInd, this.data);
    * @param {Uint8Array} uint8Array The data to add.
    */
 	addBinaryData(uint8Array) {
-console.log("addBinaryData", this.tags, uint8Array.length);
+// console.log("addBinaryData", this.tags, uint8Array.length);
 		this.chunks.push(uint8Array);
 		if (!this.data) {
 			this.data = new Uint8Array(0);
@@ -66,7 +66,13 @@ console.log("addBinaryData", this.tags, uint8Array.length);
 		if (!tags.error) {
 			this.tags = tags;
 			if (this.onTags) this.onTags(tags);
-			this._shift = tags._nextPos;
+			this._shift = 0;
+			const rest = this.data.subarray(tags._nextPos);
+			const newData = new Uint8Array(rest.length);
+			newData.set(rest);	// остаток данных
+			this.data = newData;
+			this._shiftPos = tags._nextPos;
+
 			this._strips = (tags.isTiled ? tags.TileByteCounts : tags.StripByteCounts).map((cnt, i) => {
 				return {
 					pos: (tags.isTiled ? tags.TileOffsets : tags.StripOffsets)[i],
@@ -165,60 +171,40 @@ console.log("addBinaryData", this.tags, uint8Array.length);
 		let {tSize, colCount} = tags.tilesConf;
 		let {width, height} = tSize;
 
-		// let _stripWidth = tags.imageSize.width * RowsPerStrip * (Array.isArray(BitsPerSample) ? BitsPerSample.length : BitsPerSample);
-		let _stripWidth = tags.imageSize.width * RowsPerStrip;
+		let _bps = (Array.isArray(BitsPerSample) ? BitsPerSample.length : BitsPerSample / 8);
 		let tStripNum = lastInd - tileInd;
-		const ndarray = new Uint8Array(tStripNum * _stripWidth);
+		let _stripWidth = tags.imageSize.width * RowsPerStrip;
+		let lenArr = tStripNum * _stripWidth;
+		let ndarray;
+		if (_bps === 2) {
+			ndarray = new Uint16Array(lenArr);
+		} else {
+			ndarray = new Uint8Array(lenArr);
+		}
 
 		for (let i = tileInd; i < lastInd; i++) {
 			let strip = this._strips[i];
 			let {pos, cnt} = strip;
 			let b = pos - _shiftPos;
-			// let b = pos - _shiftPos;
-			// _shiftPos = _shift;
+			let p = _stripWidth * (i - tileInd);
 
-			const arr = this.data.subarray(b, b + cnt);
-if (arr[0] !== 120) {
-// if (i > 4) {
-debugger
-console.warn("bb:  ", tileInd, lastInd, strip.cnt, this.data.length);
-}
-			const arr1 = Compression === 1 ? arr : pako.ungzip(arr);
-/*
-if (ColorMap) {
-  const greenOffset = ColorMap.length / 3;
-  const blueOffset = ColorMap.length / 3 * 2;
-  arr1.forEach(v => {
-	let r = ColorMap[v] / 65536 * 256;
-	let g = ColorMap[v + greenOffset] / 65536 * 256;
-	let b = ColorMap[v + blueOffset] / 65536 * 256;
-	let out = [r, g, b];
-if (r) {
-debugger
-}
-  });
-}
-
-export function fromPalette(raster, colorMap) {
-  const { width, height } = raster;
-  const rgbRaster = new Uint8Array(width * height * 3);
-  const greenOffset = colorMap.length / 3;
-  const blueOffset = colorMap.length / 3 * 2;
-  for (let i = 0, j = 0; i < raster.length; ++i, j += 3) {
-    const mapIndex = raster[i];
-    rgbRaster[j] = colorMap[mapIndex] / 65536 * 256;
-    rgbRaster[j + 1] = colorMap[mapIndex + greenOffset] / 65536 * 256;
-    rgbRaster[j + 2] = colorMap[mapIndex + blueOffset] / 65536 * 256;
-  }
-  return rgbRaster;
-}
-
-*/			
-			ndarray.set(arr1, _stripWidth * (i - tileInd));
+			if (_bps === 2) {
+				const arr1 = new Uint16Array(this.data.buffer, b, cnt / _bps);
+				ndarray.set(arr1, p);
+			} else {
+				const arr = this.data.subarray(b, b + cnt);
+				const arr1 = Compression === 1 ? arr : pako.ungzip(arr);
+				ndarray.set(arr1, p);
+			}
+		
 		}
 		const dx = 0;
 		const dy = tileInd;
 		tSize.height = tags.RowsPerStrip * ndarray.length / _stripWidth;
+		
+		if (_bps === 2) {
+			// ndarray = new Uint16Array(ndarray);
+		}
 		if (this.onTile) this.onTile({ ndarray, tSize, dx, dy, num: tileInd });
 
 		this._shift = 0;

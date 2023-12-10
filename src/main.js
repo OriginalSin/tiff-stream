@@ -53,3 +53,4 @@ document.addEventListener('wheel', (e) => {
 // fetchTiff('./data/B_RGB.tif', options);
 fetchTiff('./data/33.tif', options);
 // fetchTiff('./data/atlas_south.tif', options);
+// fetchTiff('./data/l16.tif', options);

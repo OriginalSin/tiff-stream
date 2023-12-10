@@ -23,6 +23,7 @@ export default class TilesConcat {
 			tfShader = getColorMapShader(options.ColorMap);
 			// console.warn('__colorMapShader__', tfShader);
 		}
+			console.warn('__colorMapShader__', tfShader);
 
 
 		const program = webglUtils.createProgramFromSources(this.gl, [texShader.v, tfShader]);
@@ -148,6 +149,7 @@ export default class TilesConcat {
 			if (!drawInfo.texture) return;
 			that._drawImage(drawInfo.texture, drawInfo.width, drawInfo.height, drawInfo.x, drawInfo.y );
 		});
+ // console.warn('__textureInfos__', this.textureInfos.length);
 		this._drawTilesGrid(this.progs.tBound);
 	}
 	
@@ -159,7 +161,9 @@ export default class TilesConcat {
 		const imageSize = this.tags.imageSize;			// размеры tiff
 		const {width, height} = tSize || {};			// размеры тайла
 		const bitmapType = ndarray.constructor.name;	// тип ndarray
-		const bitmapChanels = ndarray.length / (width * height);	// сколько каналов
+		// const bitmapChanels = ndarray.length / (width * height);
+		const BitsPerSample = this.tags.BitsPerSample;
+		const bitmapChanels = (Array.isArray(BitsPerSample) ? BitsPerSample.length : 1);		// сколько каналов(байтов на пиксель)
 		const DefPars = {
 			internalFormat: gl.RGBA,   // format we want in the texture
 			srcFormat: gl.RGBA,        // format of data we are supplying
@@ -183,10 +187,27 @@ export default class TilesConcat {
 				break;
 			case 'Uint16Array':
 				if (bitmapChanels === 1) {
+var color_buffer_float_16ui = gl.getExtension('EXT_color_buffer_float'); // add for 16-bit
 
 	gl.pixelStorei( gl.UNPACK_ALIGNMENT, 1);
 	// gl.enable(gl.SCISSOR_TEST);
 	// gl.scissor(0, 0, 200, 200);
+				mipMapping = true;
+				// mipMapping = false;
+
+/*
+					internalFormat = gl.R16UI;
+					srcFormat = gl.RED_INTEGER;
+					srcType = gl.UNSIGNED_SHORT;
+
+					// ndarray = new Float32Array(ndarray);
+					// internalFormat = gl.R32F;
+					// srcFormat = gl.RED;
+					// srcType = gl.FLOAT;
+					// internalFormat = gl.RGBA4;
+					// srcFormat = gl.RGBA;
+					// srcType = gl.UNSIGNED_SHORT_4_4_4_4;
+EXT_color_buffer_float 
 				mipMapping = false;
 				let max = 0, min = 0;
 					// ndarray1 = new Float32Array(ndarray.length).fill(1);
@@ -199,10 +220,18 @@ export default class TilesConcat {
 // console.log("bitmapType", max,min);
 					// ndarray1.forEach((v, i) => ndarray1[i] = v / 32768);
 					// ndarray = ndarray1;
+*/
 
-					internalFormat = gl.R32F;
-					srcFormat = gl.RED;
-					srcType = gl.FLOAT;
+					// ndarray = new Float32Array(ndarray);
+					internalFormat = gl.RGB;
+					srcFormat = gl.RGB;
+					srcType = gl.UNSIGNED_SHORT_5_6_5;
+					
+					internalFormat = gl.DEPTH_COMPONENT16;
+					srcFormat = gl.DEPTH_COMPONENT;
+					srcType = gl.UNSIGNED_SHORT;
+
+
 				}
 				break;
 			case 'Float32Array':
@@ -214,8 +243,8 @@ export default class TilesConcat {
 					srcType = gl.FLOAT;
 				} else {
 					internalFormat = gl.RGBA32F;
-					srcFormat = gl.RGBA;
-					srcType = gl.FLOAT;
+					srcFormat = gl.UNSIGNED_BYTE;
+					srcType = gl.UNSIGNED_BYTE;
 				}
 				break;
 		}
@@ -230,6 +259,13 @@ export default class TilesConcat {
 			ndarray									// ndarray картинки
 		);
 
+if (mipMapping) {
+// set the filtering so we don't need mips and it's not filtered
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+}
 	}
 	
 	Render(opt) { // отрисовка тайла
@@ -295,7 +331,7 @@ let scale = this.vpScale;
 		const dy = scale * (dstY - vpShift[1] - vpPos[1]);
 		const w = scale * texWidth;
 		const h = scale * texHeight;
-		if (dx < 0) {
+		if (dy === 0) {
  // console.warn('__resize__', dx, dy, texWidth, texHeight, dstX, dstY);
 		}
 
