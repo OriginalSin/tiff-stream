@@ -4,7 +4,8 @@ import m4 from './m4.js';
 "use strict";
 const qualityOptions = { anisotropicFiltering: true, mipMapping: true, linearFiltering: true };
 const _anisoExt = null;//, srcPoints, matrix, glResources, gl;
-const contextOpt = {preserveDrawingBuffer: true};
+// const contextOpt = {preserveDrawingBuffer: true};
+const contextOpt = {};
 
 export default class TilesConcat {
 	constructor(options) {
@@ -20,7 +21,9 @@ export default class TilesConcat {
 
 		let tfShader = texShader.f;
 		if (options.ColorMap) {
+			let imageSize = options.imageSize;
 			tfShader = getColorMapShader(options.ColorMap);
+			// tfShader = setLamb(tfShader, '0.', '0.');
 			// console.warn('__colorMapShader__', tfShader);
 		}
 			console.warn('__colorMapShader__', tfShader);
@@ -243,8 +246,8 @@ EXT_color_buffer_float
 					srcType = gl.FLOAT;
 				} else {
 					internalFormat = gl.RGBA32F;
-					srcFormat = gl.UNSIGNED_BYTE;
-					srcType = gl.UNSIGNED_BYTE;
+					srcFormat = gl.RGBA;
+					srcType = gl.FLOAT;
 				}
 				break;
 		}
@@ -311,6 +314,7 @@ gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
   // with them so we'll pass in the width and height of the texture
 	_drawImage(tex, texWidth, texHeight, dstX, dstY) {
  		const {gl, program, canvas, vpShift, vpPos} = this;
+		const imageSize = this.tags.imageSize;			// размеры tiff
 		gl.bindTexture(gl.TEXTURE_2D, tex);
 
 		gl.useProgram(program);    // Tell WebGL to use our shader program pair
@@ -334,7 +338,13 @@ let scale = this.vpScale;
 		if (dy === 0) {
  // console.warn('__resize__', dx, dy, texWidth, texHeight, dstX, dstY);
 		}
-
+const iCenter = [imageSize.width / 2, imageSize.height / 2];	// центр tiff
+const tCenter = [texWidth / 2, texHeight / 2];	// центр tile
+const sCenter = [iCenter[0] - tCenter[0], iCenter[1] - tCenter[1]];	// shift
+const ugol = Math.cos(sCenter[0] / sCenter[1]);	// ugol
+// matrix = m4.translate(matrix, -scale * sCenter[0], -scale * sCenter[1], 0);
+// matrix = m4.xRotate(matrix, 2 * ugol / Math.PI);
+// matrix = m4.yRotate(matrix, ugol / Math.PI);
     // this matrix will scale our 1 unit quad
     // from 1 unit to texWidth, texHeight units
 		matrix = m4.translate(matrix, dx, dy, 0);    // this matrix will translate our quad to dstX, dstY
@@ -349,7 +359,7 @@ let scale = this.vpScale;
 }
 
 
-const tBoundShader = {
+const tBoundShader_ = {
 	v: `#version 300 es
 		precision highp float;
 
@@ -387,13 +397,57 @@ const tBoundShader = {
 	`,
 };
 
+const tBoundShader = {
+	v: `#version 300 es
+		precision highp float;
+
+		in vec2 position;
+		in vec2 normal;
+		in float miter; 
+		uniform mat4 projection;
+		uniform mat4 model;
+		uniform mat4 view;
+		uniform float thickness;
+		out float edge;
+		out vec4 v_pos;
+
+		void main() {
+		  edge = sign(miter);
+		  vec2 pointPos = position.xy + vec2(normal * thickness/2.0 * miter);
+		  gl_Position = projection * view * model * vec4(pointPos, 0.0, 1.0);
+		  v_pos = gl_Position;
+		  gl_PointSize = 1.0;
+		}
+	`,
+	f: `#version 300 es
+		precision highp float;
+
+		uniform vec3 color;
+		uniform float inner;
+		in float edge;
+		in vec4 v_pos;
+
+		// const vec3 color2 = vec3(0.8);
+
+		out vec4 outColor;
+		void main() {
+		   float d = 5.;
+		   // float d = distance(v_pos, vec4(0., 0., 0., 0.));
+		   // float d = distance(v_texcoord, vec2(0., 0.));
+		   if (d > 2.1) discard;
+		  float v = 1.0 - abs(edge);
+		  v = smoothstep(0.65, 0.7, v*inner); 
+		  outColor = mix(vec4(color, 1.0), vec4(0.0), v);
+		}
+	`,
+};
 
 const fMain = `
 	void main() {
 	   outColor = texture(u_texture, v_texcoord);
 	}
 `;
-const texShader = {
+const texShader_ = {
 	v: `#version 300 es
 		precision highp float;
 
@@ -419,6 +473,45 @@ const texShader = {
 ${fMain}
 	`
 };
+
+const texShader = {
+	v: `#version 300 es
+		precision highp float;
+
+		in vec4 a_position;
+		in vec2 a_texcoord;
+		uniform mat4 u_matrix;
+
+		out vec2 v_texcoord;
+		out vec4 v_pos;
+
+		void main() {
+		   gl_Position = u_matrix * a_position;
+		   // v_pos = vec4(a_texcoord, 0., 0.) + gl_Position;
+		   // v_pos = a_position - u_matrix * vec4(a_texcoord, 0., 0.);
+		   v_pos = a_position;
+		   // v_pos = u_matrix * vec4(a_texcoord, 0., 0.);
+		   // v_pos = u_matrix * vec4(a_texcoord, 0., 0.) - a_position;
+		   // v_pos = u_matrix * vec4(a_texcoord, 0., 0.);
+		   // v_pos = gl_Position - u_matrix * vec4(a_texcoord, 0., 0.);
+		   // v_pos = gl_Position;
+		   v_texcoord = a_texcoord;
+		}
+	`,
+	f: `#version 300 es
+		precision highp float;
+
+		in vec2 v_texcoord;
+		in vec4 v_pos;
+
+		uniform sampler2D u_texture;
+
+		out vec4 outColor;				// we need to declare an output for the fragment shader
+${fMain}
+	`
+};
+
+
 const getColorMapShader = function(cm) {
 	const gs = cm.length / 3, bs = gs * 2;
 	let out = [];
@@ -438,9 +531,112 @@ const getColorMapShader = function(cm) {
 	str = str.replace(fMain, `
 		${out.join('\n')}
 	void main() {
+		   // float d = distance(v_pos, vec4(0., 0., 0., 0.));
+		   // float d = distance(v_texcoord, vec2(0., 0.));
+		   // if (d < 1.1) discard;
 	   vec4 tColor = texture(u_texture, v_texcoord);
 	   outColor = colorMap(tColor[0]);
 	}
 	`);
 	return str;
 }
+
+const lamb = `
+	float p = 0.;
+	float d = 0.;
+	vec2 lamb(vec2 c) {
+	   float sd = c[1] - d;
+	   float ccsd = cos(p) * cos(sd);
+	   float k = sqrt(2.0 / (1.0 + sin(c[0]) * sin(p) + cos(c[0]) * ccsd));
+	   return vec2(
+			k * cos(p) * sin(sd),
+			k * (cos(c[1]) * sin(p) - sin(c[1]) * ccsd)
+		);
+	}
+`;
+
+function qsfnz(eccent, sinphi) {
+  var con;
+  if (eccent > 1.0e-7) {
+    con = eccent * sinphi;
+    return ((1 - eccent * eccent) * (sinphi / (1 - con * con) - (0.5 / eccent) * Math.log((1 - con) / (1 + con))));
+  }
+  else {
+    return (2 * sinphi);
+  }
+}
+
+/* determine latitude from authalic latitude */
+var P00 = 0.33333333333333333333;
+
+var P01 = 0.17222222222222222222;
+var P02 = 0.10257936507936507936;
+var P10 = 0.06388888888888888888;
+var P11 = 0.06640211640211640211;
+var P20 = 0.01641501294219154443;
+
+function authset(es) {
+  var t;
+  var APA = [];
+  APA[0] = es * P00;
+  t = es * es;
+  APA[0] += t * P01;
+  APA[1] = t * P10;
+  t *= es;
+  APA[0] += t * P02;
+  APA[1] += t * P11;
+  APA[2] = t * P20;
+  return APA;
+}
+
+function authlat (beta, APA) {
+  var t = beta + beta;
+  return (beta + APA[0] * Math.sin(t) + APA[1] * Math.sin(t + t) + APA[2] * Math.sin(t + t + t));
+}
+
+const setLamb = function(shader, p = '0.', d = '0.') {
+	let str = shader;
+	let HALF_PI = Math.PI / 2;
+    // this.qp = qsfnz(this.e, 1);
+  // var lam = p.x;
+  // var phi = p.y;
+    // sinphi = Math.sin(phi);
+    // cosphi = Math.cos(phi);
+    // coslam = Math.cos(lam);
+		// float x = ${p};
+		// float y = ${d};
+  // p.x = this.a * x + this.x0;
+  // p.y = this.a * y + this.y0;
+		   // float sd = c[0] - d;
+		   // float zn = 1.0 + sin(p) * sin(c[1]) + cos(p) * cos(c[1]) * cos(sd);
+		   // float k = sqrt(2.0 / zn);
+		   // return vec2(
+				// k * cos(c[1]) * sin(sd),
+				// 1. - k * (cos(p) * sin(c[1]) - sin(p) * cos(c[1]) * cos(sd))
+			// );
+    // rh = Math.sqrt(x * x + y * y);
+			// float rh = sqrt(x * x + y * y);
+
+	str = str.replace('void main() {', `
+		vec2 lamb(vec2 c) {
+			float x = c[0];
+			float y = c[1];
+			float q = x * x + y * y;
+if (q = 0.) return vec2(0., 0.);
+      float ab = 1. - q / this.qp;
+			float phi = 2. * asin(rh * 0.5);
+      y = -y;
+      phi = ${HALF_PI} - phi;
+    float lam = atan(x, y);
+
+
+		   return vec2(
+				abs(x) <= 3.14159265359 ? x : (x - (sign(x) * 4. * ${HALF_PI})),
+				phi
+			);
+		}
+	void main() {
+	`);
+	str = str.replace('texture(u_texture, v_texcoord)', 'texture(u_texture, lamb(v_texcoord))');
+	return str;
+};
