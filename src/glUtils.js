@@ -157,5 +157,82 @@ export function createProgramFromSources(
           gl, shaderSources[ii], gl[defaultShaderType[ii]], opt_errorCallback));
     }
     return createProgram(gl, shaders, opt_attribs, opt_locations, opt_errorCallback);
-  }
+}
 
+const getRGB = function(i, cm, gs, bs) {
+	const r = (cm[i] >> 8) / 255, g = (cm[i + gs] >> 8) / 255, b = (cm[i + bs] >> 8) / 255;
+	const a = getAlpha({r, g, b});
+	return {r, g, b, a};
+}
+
+const getVec4 = function(p) {
+	return 'vec4(' + [p.r.toFixed(10), p.g.toFixed(10), p.b.toFixed(10)].join(', ') + ', ' + p.a.toFixed(1) + ')';
+}
+
+const getAlpha = function(p) {
+	// if (p.b === 1)
+	// return 1;
+	const ev = (p.r + p.g + p.b) / 3;
+	return p.r === ev && p.g === ev && p.b === ev ? 0.4 : 0.9;
+	// return p.r === ev && p.g === ev && p.b === ev ? 0.2 : 1;
+}
+export function getColorMapShader(cm, fMain, fss) {
+	const gs = cm.length / 3, bs = gs * 2;
+	let rArr = [];
+	let rArr1 = [];
+	let out = [];
+	// let alpha = 1;
+	// let vec4p = [(cm[0] >> 8) / 255, (cm[gs] >> 8) / 255, (cm[bs] >> 8) / 255, alpha];
+	let pLine = getRGB(0, cm, gs, bs);
+	let i = 0;
+	for (; i < gs; i++) {
+		let cLine = getRGB(i, cm, gs, bs);
+		if (pLine.r !== cLine.r || pLine.g !== cLine.g || pLine.b !== cLine.b || pLine.a !== cLine.a) {
+			rArr.push({i, ...pLine});
+		}
+			// rArr1.push({i, ...pLine});
+		pLine = cLine;
+	}
+	const out1 = 'vec4 colorMap(float v) {\n' + rArr.map(p => {
+		return '	if (v < ' + (p.i / 255).toFixed(10) + ') return ' + getVec4(p) + ';';
+	}).join('\n	else ') + '\n	return ' + getVec4(pLine) + ';\n}';
+// console.log('rArr ', rArr1, out1);
+
+	let str = fss;
+	str = str.replace(fMain, `
+		${out1}
+	void main() {
+	   vec4 tColor = texture(u_texture, v_texcoord);
+	   outColor = colorMap(tColor[0]);
+	}
+	`);
+	return str;
+}
+
+export function createFramebufferTexture(gl, size = {}) {
+	let fbo = gl.createFramebuffer();
+	gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+
+	let renderbuffer = gl.createRenderbuffer();
+	gl.bindRenderbuffer(gl.RENDERBUFFER, renderbuffer);
+
+	let texture = gl.createTexture();
+	gl.bindTexture(gl.TEXTURE_2D, texture);
+	gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, size.width || 256, size.height || 256, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+	gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+
+	gl.bindTexture(gl.TEXTURE_2D, null);
+	gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+	return {fbo, texture};
+};
+export function bindFrambufferAndSetViewport(gl, fb, width, height) {
+   gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+   gl.viewport(0, 0, width, height);
+}

@@ -72,7 +72,11 @@ function getTags(uint8Array) {		// Получение описания TIFF.
 	if (tags.TileByteCounts) {
 		tags.isTiled = true;
 		tags.tilesConf = {
-			tSize: {width: tags.TileWidth, height: tags.TileLength},
+			tSize: {
+				width: tags.TileWidth,
+				height: tags.TileLength,
+				bytes: tags.TileWidth * tags.TileLength * tags.BitsPerSample.length
+			},
 			colCount: Math.ceil(tags.imageSize.width / tags.TileWidth),
 			tilesCount: tags.TileByteCounts.length
 		};

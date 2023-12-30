@@ -16,18 +16,23 @@ export default class TilesConcat {
 		this.canvas = canvas;
 		this.tags = options;
 		this.progs = {
-			tBound: this._setTileBoundsProg(),
+			reproject: this._setReprojectProg(),
 		};
-
+this._init1();
 		let tfShader = texShader.f;
 		if (options.ColorMap) {
 			let imageSize = options.imageSize;
-			tfShader = getColorMapShader(options.ColorMap);
+			// tfShader = getColorMapShader(options.ColorMap, fMain);
+// console.warn('__colorMapShader__', fMain);
+			tfShader = webglUtils.getColorMapShader(options.ColorMap, fMain, texShader.f);
 			// tfShader = setLamb(tfShader, '0.', '0.');
 			// console.warn('__colorMapShader__', tfShader);
 		}
 			console.warn('__colorMapShader__', tfShader);
+		const size = this.tags.imageSize;
+		this.fbo = webglUtils.createFramebufferTexture(gl, size);
 
+		this.textureInfos = [];
 
 		const program = webglUtils.createProgramFromSources(this.gl, [texShader.v, tfShader]);
 		this.program = program;
@@ -70,6 +75,12 @@ export default class TilesConcat {
 		requestAnimationFrame(this._autoFrame.bind(this));
 	}
 
+	clear() {
+ 		const {gl} = this;
+		gl.clear(gl.DEPTH_BUFFER_BIT | gl.COLOR_BUFFER_BIT);
+		// gl.clear(gl.COLOR_BUFFER_BIT);
+	}
+
     _autoFrame(time) {
 		this._draw();
 		requestAnimationFrame(this._autoFrame.bind(this));
@@ -82,25 +93,7 @@ export default class TilesConcat {
  console.warn('__resize__', canvas.width, this.gl.canvas.width, twgl.m4);
 	}
 
-    _setTileBoundsProg() {
-		const {gl} = this;
-		const p = webglUtils.createProgramFromSources(this.gl, [tBoundShader.v, tBoundShader.f]);
-
-		const tBound = {
-			p,
-			position: gl.getAttribLocation(p, 'position'),
-			normal: gl.getAttribLocation(p, 'normal'),
-			miter: gl.getAttribLocation(p, 'miter'),
-			
-			projection: gl.getUniformLocation(p, 'projection'),
-			model: gl.getUniformLocation(p, 'model'),
-			view: gl.getUniformLocation(p, 'view'),
-			thickness: gl.getUniformLocation(p, 'thickness'),
-		};
-		return tBound;
-	}
-
-    _init() {
+    _init_() {
 		const {gl} = this;
 		// const canvas = this.canvas;
 		
@@ -137,23 +130,63 @@ export default class TilesConcat {
 
 		this.textureInfos = [];
 	}
+    _init() {
+		const {gl} = this;
+
+		const pos = new Float32Array([0, 0,  0, 1,  1, 0,  1, 0,  0, 1,  1, 1]);
+
+		this.positionBuffer = gl.createBuffer();				// Create a buffer.
+		gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer);	// Put a unit quad in the buffer
+		gl.bufferData(gl.ARRAY_BUFFER, pos, gl.STATIC_DRAW);
+
+		this.texcoordBuffer = gl.createBuffer();				// Create a buffer for texture coords
+		gl.bindBuffer(gl.ARRAY_BUFFER, this.texcoordBuffer);
+		gl.bufferData(gl.ARRAY_BUFFER, pos, gl.STATIC_DRAW);
+
+		// this.centerBuffer = gl.createBuffer();				// Create a buffer for texture center
+		// gl.bindBuffer(gl.ARRAY_BUFFER, this.centerBuffer);
+		// gl.bufferData(gl.ARRAY_BUFFER, this.ctexcoord, gl.STATIC_DRAW);
+	}
+    _init1() {
+		const {gl} = this;
+
+		const pos = new Float32Array([0, 0,  0, 1,  1, 0,  1, 0,  0, 1,  1, 1]);
+
+		this.positionBuffer1 = gl.createBuffer();				// Create a buffer.
+		gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer1);	// Put a unit quad in the buffer
+		gl.bufferData(gl.ARRAY_BUFFER, pos, gl.STATIC_DRAW);
+
+		this.texcoordBuffer1 = gl.createBuffer();				// Create a buffer for texture coords
+		gl.bindBuffer(gl.ARRAY_BUFFER, this.texcoordBuffer1);
+		gl.bufferData(gl.ARRAY_BUFFER, pos, gl.STATIC_DRAW);
+
+		// this.centerBuffer = gl.createBuffer();				// Create a buffer for texture center
+		// gl.bindBuffer(gl.ARRAY_BUFFER, this.centerBuffer);
+		// gl.bufferData(gl.ARRAY_BUFFER, this.ctexcoord, gl.STATIC_DRAW);
+	}
 
 	_draw(opt) {
- 		const {gl, canvas, vpShift} = this;
+ 		const {gl, canvas, vpShift, fbo} = this;
 		webglUtils.resizeCanvasToDisplaySize(canvas);
+		// this._init();
 
  		gl.viewport(0, 0, canvas.width, canvas.height);   // Tell WebGL how to convert from clip space to pixels
  		// gl.viewport(-vpShift[0], -vpShift[1], canvas.width, canvas.height);   // Tell WebGL how to convert from clip space to pixels
  		// gl.viewport(-vpShift[0], -vpShift[1], canvas.width + vpShift[0], canvas.height + vpShift[1]);   // Tell WebGL how to convert from clip space to pixels
  		// gl.viewport(vpShift[0], vpShift[1], rect[2], rect[3]);   // Tell WebGL how to convert from clip space to pixels
-		gl.clear(gl.COLOR_BUFFER_BIT);
+		// gl.clear(gl.COLOR_BUFFER_BIT);
+		const imageSize = this.tags.imageSize;			// размеры tiff
+		// let matrix = m4.orthographic(0, imageSize.width, imageSize.height, 0, -1, 1);
+		webglUtils.bindFrambufferAndSetViewport(gl, fbo.fbo, imageSize.width, imageSize.height);
+
 		let that = this;
+		this.clear();
 		this.textureInfos.forEach(function(drawInfo) {	// перерисовка тектур
 			if (!drawInfo.texture) return;
 			that._drawImage(drawInfo.texture, drawInfo.width, drawInfo.height, drawInfo.x, drawInfo.y );
 		});
  // console.warn('__textureInfos__', this.textureInfos.length);
-		this._drawTilesGrid(this.progs.tBound);
+		this.drawScene();
 	}
 	
 	_setTex(opt) { // текстура по ndarray
@@ -283,7 +316,7 @@ gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 		gl.bindTexture(gl.TEXTURE_2D, tex);
 
 		gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE,
-                  new Uint8Array([0, 0, 255, 255]));    // Fill the texture with a 1x1 blue pixel.
+                  new Uint8Array([255, 0, 0, 255]));    // Fill the texture with a 1x1 blue pixel.
 
 		// let's assume all images are not a power of 2
 		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
@@ -304,17 +337,13 @@ gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 		// this.drawTile(opt);
 	}
 
-	_drawTilesGrid(prog) {
- 		const {gl, canvas, vpShift, vpPos} = this;
-		
- // console.warn('_drawTilesGrid', vpShift, vpPos);
-	}
-
   // Unlike images, textures do not have a width and height associated
   // with them so we'll pass in the width and height of the texture
 	_drawImage(tex, texWidth, texHeight, dstX, dstY) {
- 		const {gl, program, canvas, vpShift, vpPos} = this;
+ 		const {gl, program, canvas, vpShift, vpPos, tags, fbo} = this;
 		const imageSize = this.tags.imageSize;			// размеры tiff
+		// let matrix = m4.orthographic(0, imageSize.width, imageSize.height, 0, -1, 1);
+		// webglUtils.bindFrambufferAndSetViewport(gl, fbo.fbo, imageSize.width, imageSize.height);
 		gl.bindTexture(gl.TEXTURE_2D, tex);
 
 		gl.useProgram(program);    // Tell WebGL to use our shader program pair
@@ -329,34 +358,157 @@ gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 		gl.vertexAttribPointer(this.texcoordLocation, 2, gl.FLOAT, false, 0, 0);
 
     // this matrix will convert from pixels to clip space
-		let matrix = m4.orthographic(0, gl.canvas.width, gl.canvas.height, 0, -1, 1);
-let scale = this.vpScale;
-		const dx = scale * (dstX - vpShift[0] - vpPos[0]);
-		const dy = scale * (dstY - vpShift[1] - vpPos[1]);
-		const w = scale * texWidth;
-		const h = scale * texHeight;
-		if (dy === 0) {
+		let matrix = m4.orthographic(0, imageSize.width, imageSize.height, 0, -1, 1);
+		// let matrix = m4.orthographic(0, gl.canvas.width, gl.canvas.height, 0, -1, 1);
+// let scale = this.vpScale;
+		// const dx = scale * (dstX - vpShift[0] - vpPos[0]);
+		// const dy = scale * (dstY - vpShift[1] - vpPos[1]);
+		// const w = scale * texWidth;
+		// const h = scale * texHeight;
+		// if (dy === 0) {
  // console.warn('__resize__', dx, dy, texWidth, texHeight, dstX, dstY);
-		}
-const iCenter = [imageSize.width / 2, imageSize.height / 2];	// центр tiff
-const tCenter = [texWidth / 2, texHeight / 2];	// центр tile
-const sCenter = [iCenter[0] - tCenter[0], iCenter[1] - tCenter[1]];	// shift
-const ugol = Math.cos(sCenter[0] / sCenter[1]);	// ugol
+		// }
+// const iCenter = [imageSize.width / 2, imageSize.height / 2];	// центр tiff
+// const tCenter = [texWidth / 2, texHeight / 2];	// центр tile
+// const sCenter = [iCenter[0] - tCenter[0], iCenter[1] - tCenter[1]];	// shift
+// const ugol = Math.cos(sCenter[0] / sCenter[1]);	// ugol
 // matrix = m4.translate(matrix, -scale * sCenter[0], -scale * sCenter[1], 0);
 // matrix = m4.xRotate(matrix, 2 * ugol / Math.PI);
 // matrix = m4.yRotate(matrix, ugol / Math.PI);
     // this matrix will scale our 1 unit quad
     // from 1 unit to texWidth, texHeight units
-		matrix = m4.translate(matrix, dx, dy, 0);    // this matrix will translate our quad to dstX, dstY
-		matrix = m4.scale(matrix, w, h, 1);
+		const dx = dstX;
+		const dy = dstY;
+		const w = texWidth;
+		const h = texHeight;
+matrix = m4.translate(matrix, dx, dy, 0);    // this matrix will translate our quad to dstX, dstY
+matrix = m4.scale(matrix, w, h, 1);
 		gl.uniformMatrix4fv(this.matrixLocation, false, matrix);    // Set the matrix.
 
 		gl.uniform1i(this.textureLocation, 0);    // Tell the shader to get the texture from texture unit 0
 
 		gl.drawArrays(gl.TRIANGLES, 0, 6);    // draw the quad (2 triangles, 6 vertices)
+ // console.warn('drawArrays', dx, dy, w, h);
   }
 
+	drawScene() {
+ 		const {gl, program, canvas, tags, fbo, imLRBT, progs} = this;
+ 		const reproject = progs.reproject;
+// return;
+ 		// gl.useProgram(progs.reproject.p);    // перепроцирование
+
+		// gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer);
+		// gl.enableVertexAttribArray(progs.position);
+		// gl.vertexAttribPointer(progs.position, 2, gl.FLOAT, false, 0, 0);
+		
+		// gl.bindBuffer(gl.ARRAY_BUFFER, this.texcoordBuffer);
+		// gl.enableVertexAttribArray(progs.texcoordLocation);
+		// gl.vertexAttribPointer(progs.texcoordLocation, 2, gl.FLOAT, false, 0, 0);
+
+		// gl.uniform1i(progs.textureLocation, 0);    // Tell the shader to get the texture from texture unit 0
+
+		gl.bindTexture(gl.TEXTURE_2D, fbo.texture);	// входная текстура
+ 		gl.useProgram(reproject.p);    // перепроцирование
+    // Setup the attributes to pull data from our buffers
+		gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer1);
+		gl.enableVertexAttribArray(reproject.positionLocation);
+		gl.vertexAttribPointer(reproject.positionLocation, 2, gl.FLOAT, false, 0, 0);
+		
+		gl.bindBuffer(gl.ARRAY_BUFFER, this.texcoordBuffer1);
+		gl.enableVertexAttribArray(reproject.texcoordLocation);
+		gl.vertexAttribPointer(reproject.texcoordLocation, 2, gl.FLOAT, false, 0, 0);
+
+webglUtils.bindFrambufferAndSetViewport(gl, null, canvas.width, canvas.height); // куда рисуем fbo=null то на экран
+		gl.viewport(0, 0, canvas.width, canvas.height);   // Tell WebGL how to convert from clip space to pixels
+		const imageSize = tags.imageSize;
+		// const scx = 1 - canvas.width * (imLRBT[1] - imLRBT[0]) / imageSize.width;
+		// const scy = 1 - canvas.height * (imLRBT[2] - imLRBT[3]) / imageSize.height;
+		// const scx = imLRBT[1] - imLRBT[0];
+		// const scy = imLRBT[2] - imLRBT[3];
+		let matrix = m4.orthographic(0, 1, 0, 1, -1, 1); // left, right, bottom, top
+		// let matrix = m4.orthographic(0, 1, 1, 0, -1, 1); // left, right, bottom, top
+		// let matrix = m4.orthographic(0, canvas.width, canvas.height, 0, -1, 1);
+		// let matrix = m4.orthographic(imLRBT[0], imLRBT[1], imLRBT[2], imLRBT[3], -1, 1);
+		// if (this.matrix4fv) matrix = m4.multiply(matrix, this.matrix4fv);
+// matrix = m4.translate(matrix, imLRBT[0] +  0.5 * scx, 0.5, 0);
+// matrix = m4.scale(matrix, scx,  scy, 1);
+// matrix = m4.scale(matrix, 0.5,  0.5, 1);
+// matrix = m4.scale(matrix, this.scx,  -this.scy, 1);
+// matrix = m4.translate(matrix, imLRBT[0] , imLRBT[3], 0);
+// matrix = m4.translate(matrix, imLRBT[0] , imLRBT[3], 0);
+		// let matrix = m4.orthographic(0, canvas.width, canvas.height, 0, -1, 1);
+		// let matrix = m4.orthographic(0, imageSize.width, imageSize.height, 0, -1, 1);
+
+		// gl.uniformMatrix4fv(this.matrixLocation, false, matrix);    // Set the matrix.
+		gl.uniformMatrix4fv(reproject.matrixLocation, false, matrix);    // Set the matrix.
+		this.clear();
+
+		gl.drawArrays(gl.TRIANGLES, 0, 6);    // draw the quad (2 triangles, 6 vertices)
+// console.log("drawScene", imageSize);
+	}
+
+    _setReprojectProg() {
+		const {gl} = this;
+		const p = webglUtils.createProgramFromSources(this.gl, [reprojectShader.v, reprojectShader.f]);
+
+		const tBound = {
+			p,
+			positionLocation: gl.getAttribLocation(p, "a_position"),
+			texcoordLocation: gl.getAttribLocation(p, "a_texcoord"),
+
+			matrixLocation: gl.getUniformLocation(p, "u_matrix"),
+			textureLocation: gl.getUniformLocation(p, "u_texture")
+
+		};
+		return tBound;
+	}
+
 }
+
+
+
+const reprojectShader = {
+	v: `#version 300 es
+		precision highp float;
+
+		in vec4 a_position;
+		in vec2 a_texcoord;
+		uniform mat4 u_matrix;
+
+		out vec2 v_texcoord;
+
+		void main() {
+		   gl_Position = u_matrix * a_position;
+		   v_texcoord = a_texcoord;
+		}
+	`,
+	f: `#version 300 es
+		precision highp float;
+
+		in vec2 v_texcoord;
+
+		uniform sampler2D u_texture;
+
+		out vec4 outColor;
+		
+		const float M_PI    = 3.14159265358979323846;
+		const float M_SQRT2 = 1.41421356237309504880;
+
+		vec2 getUV(vec2 t) {
+			float x = (2. * t.x - 1.);
+			float y = (2. * t.y - 1.);
+			float v = 1. - sqrt(x * x + y * y) / M_SQRT2;					// v := 1 - sqrt((2*x - 1)^2 + (2*y - 1)^2)/sqrt(2);
+			float u = 0.5 + atan((t.y - t.x) / (t.x + t.y - 1.)) / M_PI;	// u := 1/2 + arctan((y - x)/(x + y - 1))/Pi
+
+			return vec2(u, v);
+		}
+
+		void main() {
+			vec2 uv = getUV(v_texcoord);
+			outColor = texture(u_texture, uv);
+		}
+	`,
+};
 
 
 const tBoundShader_ = {
@@ -390,51 +542,6 @@ const tBoundShader_ = {
 
 		out vec4 outColor;
 		void main() {
-		  float v = 1.0 - abs(edge);
-		  v = smoothstep(0.65, 0.7, v*inner); 
-		  outColor = mix(vec4(color, 1.0), vec4(0.0), v);
-		}
-	`,
-};
-
-const tBoundShader = {
-	v: `#version 300 es
-		precision highp float;
-
-		in vec2 position;
-		in vec2 normal;
-		in float miter; 
-		uniform mat4 projection;
-		uniform mat4 model;
-		uniform mat4 view;
-		uniform float thickness;
-		out float edge;
-		out vec4 v_pos;
-
-		void main() {
-		  edge = sign(miter);
-		  vec2 pointPos = position.xy + vec2(normal * thickness/2.0 * miter);
-		  gl_Position = projection * view * model * vec4(pointPos, 0.0, 1.0);
-		  v_pos = gl_Position;
-		  gl_PointSize = 1.0;
-		}
-	`,
-	f: `#version 300 es
-		precision highp float;
-
-		uniform vec3 color;
-		uniform float inner;
-		in float edge;
-		in vec4 v_pos;
-
-		// const vec3 color2 = vec3(0.8);
-
-		out vec4 outColor;
-		void main() {
-		   float d = 5.;
-		   // float d = distance(v_pos, vec4(0., 0., 0., 0.));
-		   // float d = distance(v_texcoord, vec2(0., 0.));
-		   if (d > 2.1) discard;
 		  float v = 1.0 - abs(edge);
 		  v = smoothstep(0.65, 0.7, v*inner); 
 		  outColor = mix(vec4(color, 1.0), vec4(0.0), v);
@@ -511,7 +618,7 @@ ${fMain}
 	`
 };
 
-
+/*
 const getColorMapShader = function(cm) {
 	const gs = cm.length / 3, bs = gs * 2;
 	let out = [];
@@ -540,7 +647,7 @@ const getColorMapShader = function(cm) {
 	`);
 	return str;
 }
-
+*/
 const lamb = `
 	float p = 0.;
 	float d = 0.;

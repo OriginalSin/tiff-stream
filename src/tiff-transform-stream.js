@@ -3,12 +3,12 @@
  */
 import { getTags } from './tifUtils.js';
 import pako from './pako.esm.js';
-
+import lzw from './lzw.js';
 
 /**
  * This class unpacks Uint8Arrays and sends PNG chunks when it gained enough data.
  */
-export class TiffUnpacker {
+class TiffUnpacker {
 	constructor(opt = {}) {
 		// this.data = new Uint8Array(0);
 		this.minBuf = 64 * 1024;
@@ -66,18 +66,24 @@ console.log("streamClosed:  ", this.chunks.length, this.tileInd, this.data);
 		if (!tags.error) {
 			this.tags = tags;
 			if (this.onTags) this.onTags(tags);
-			this._shift = 0;
-			const rest = this.data.subarray(tags._nextPos);
-			const newData = new Uint8Array(rest.length);
-			newData.set(rest);	// остаток данных
-			this.data = newData;
-			this._shiftPos = tags._nextPos;
+			this._shift = tags._nextPos;
 
+			const {colCount, tSize} = tags.tilesConf;
+			const {width, height, bytes} = tSize;
+			let npos;
 			this._strips = (tags.isTiled ? tags.TileByteCounts : tags.StripByteCounts).map((cnt, i) => {
 				return {
+					dx: width * (i % colCount),
+					dy: height * Math.floor(i / colCount),
 					pos: (tags.isTiled ? tags.TileOffsets : tags.StripOffsets)[i],
 					cnt
 				}; 
+			}).sort((a, b) => a.pos - b.pos).map((it, i) => {
+				if (i % colCount === 0) it.bCol = true;
+				if (i % colCount === colCount - 1) it.eCol = true;
+				if (npos && npos !== it.pos) console.warn("_strips:  ", i, npos, it.pos);
+				npos = it.pos + it.cnt;
+				return it;
 			});
 			this.setReadyTiles(true);
 
@@ -113,9 +119,12 @@ console.log("streamClosed:  ", this.chunks.length, this.tileInd, this.data);
 	_nextChunk() {
 		const nChunk = this.chunks.shift();
 		if (nChunk) {
-			const rpos = this._restPos;
+			const rpos = this._restPos - this._shiftPos;
+			// const delta = this.data.length - rpos;
+			// const rpos = this._restPos;
 			
-			this._shiftPos += rpos;
+			this._shiftPos = this._restPos;
+			// this._shiftPos += rpos;
 			const rest = this.data.subarray(rpos);
 			const newData = new Uint8Array(rest.length + nChunk.length);
 			newData.set(rest);	// остаток данных
@@ -139,28 +148,25 @@ console.log("streamClosed:  ", this.chunks.length, this.tileInd, this.data);
 		if (!isTiled || !this.data) return;
 
 		const {tSize, colCount} = tags.tilesConf;
-		const {width, height} = tSize;
+		const {width, height, bytes} = tSize;
 		const buf = this.data.buffer;
 
 		for (let i = tileInd; i < lastInd; i++) {
-			let strip = this._strips[i];
-			let {pos, cnt} = strip;
-			let b = pos - _shiftPos;
+			const strip = this._strips[i];
+			const {pos, cnt, dx, dy} = strip;
+			const b = pos - _shiftPos;
 
-			const ndarray = this.data.subarray(b, b + cnt);
+			let arr = this.data.subarray(b, b + cnt);
+			let ndarray = arr;
+			if (Compression === 5) ndarray = lzw(arr, bytes);
 
-			const dx = width * (i % colCount);
-			const dy = height * Math.floor(i / colCount);
 			if (this.onTile) this.onTile({ ndarray, tSize, dx, dy, num: i });
 		}
 		this._shift = 0;
 		this.tileInd = lastInd;
-		if (TileOffsets[lastInd]) {
-			this._restPos = TileOffsets[lastInd] - _shiftPos;
+		if (this._strips[lastInd]) {
+			this._restPos = this._strips[lastInd].pos;
 			this._nextChunk();
-			// requestAnimationFrame(this.checkForChunks.bind(this));
-		} else {
-			// this.data = undefined;
 		}
 	}
 	_getChunkStrips(tileInd, lastInd) {
@@ -171,40 +177,33 @@ console.log("streamClosed:  ", this.chunks.length, this.tileInd, this.data);
 		let {tSize, colCount} = tags.tilesConf;
 		let {width, height} = tSize;
 
-		let _bps = (Array.isArray(BitsPerSample) ? BitsPerSample.length : BitsPerSample / 8);
-		let tStripNum = lastInd - tileInd;
+		// let _stripWidth = tags.imageSize.width * RowsPerStrip * (Array.isArray(BitsPerSample) ? BitsPerSample.length : BitsPerSample);
 		let _stripWidth = tags.imageSize.width * RowsPerStrip;
-		let lenArr = tStripNum * _stripWidth;
-		let ndarray;
-		if (_bps === 2) {
-			ndarray = new Uint16Array(lenArr);
-		} else {
-			ndarray = new Uint8Array(lenArr);
-		}
+		let tStripNum = lastInd - tileInd;
+		const ndarray = new Uint8Array(tStripNum * _stripWidth);
 
 		for (let i = tileInd; i < lastInd; i++) {
 			let strip = this._strips[i];
 			let {pos, cnt} = strip;
 			let b = pos - _shiftPos;
-			let p = _stripWidth * (i - tileInd);
+			// let b = pos - _shiftPos;
+			// _shiftPos = _shift;
 
-			if (_bps === 2) {
-				const arr1 = new Uint16Array(this.data.buffer, b, cnt / _bps);
-				ndarray.set(arr1, p);
-			} else {
-				const arr = this.data.subarray(b, b + cnt);
-				const arr1 = Compression === 1 ? arr : pako.ungzip(arr);
-				ndarray.set(arr1, p);
-			}
+			const arr = this.data.subarray(b, b + cnt);
+// if (arr[0] !== 120) {
+// if (i > 4) {
+// debugger
+// console.warn("bb:  ", tileInd, lastInd, strip.cnt, this.data.length);
+// }
+			let arr1 = arr;
+			if (Compression === 8) arr1 = pako.ungzip(arr);
+			else if (Compression === 5) arr1 = lzw(arr, 196608);
 		
+			ndarray.set(arr1, _stripWidth * (i - tileInd));
 		}
 		const dx = 0;
 		const dy = tileInd;
 		tSize.height = tags.RowsPerStrip * ndarray.length / _stripWidth;
-		
-		if (_bps === 2) {
-			// ndarray = new Uint16Array(ndarray);
-		}
 		if (this.onTile) this.onTile({ ndarray, tSize, dx, dy, num: tileInd });
 
 		this._shift = 0;
@@ -258,3 +257,4 @@ console.log("streamClosed:  ", this.chunks.length, this.tileInd, this.data);
 		}
 	}
 }
+export {TiffUnpacker, getTags};

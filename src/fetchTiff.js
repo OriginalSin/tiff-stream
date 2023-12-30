@@ -1,46 +1,41 @@
-import {TiffUnpacker} from './tiff-transform-stream.js'
+import {TiffUnpacker, getTags} from './tiff-transform-stream.js'
 import TilesConcat from './wglTilesConcat.js'
-import IndDB from './IndDB.js'
+
+const k64 = 64 * 1024;
+const maxFileSize = 30 * 1000 * 1024;
+const queueingStrategy = new ByteLengthQueuingStrategy({ highWaterMark: 64 * 1024});
+
 
 class TiffStream {
     constructor(options) {
 		// super();
-		const {IndDB} = options;
+		const {name = 'test', db, stream, onTags, onTile} = options;
+// console.log('TiffUnpacked', options);
 		console.time('TiffUnpacked');
-		let pull = [];
-		// this.pull = pull;
-		let tilesConcat;
+		// let pull = [];
+		this.chunkCount = 0;
+		// let tilesConcat;
 		let bTc;
-window.test = IndDB;
+		// this.setIndDB(name);
+
+// this.stream = stream;
+		
+		const _this = this;
 		const tiffUnpacker = new TiffUnpacker({
 			onTags: tags => {
+				const tilesConcat = new TilesConcat({...tags, ...options});
+				_this.tilesConcat = tilesConcat;
+				if (options.onTags) options.onTags.call(this, tags);
  // console.log('__ onTags __', IndDB);
- 
-				tilesConcat = new TilesConcat({...tags, ...options});
- 				bTc = tilesConcat.Render.bind(tilesConcat);
-// console.log('__ onTags1 __', tilesConcat);
 			},
 			onTile: tile => {
- // console.log('__ onTile __', tile);
 				// IndDB.addRecord(tile);
-				// pull.push(tile);
-				tilesConcat.Render(tile);
-				// tilesConcat.reRender(tile);
-		// requestAnimationFrame(() => {
-				// tilesConcat.Render.call(tilesConcat, tile);
-		// });
-				// if (bTc) {
-					// pull.forEach(bTc);
-			// pull = [];
-				// }
+// if (tile.num > 50) return;
+				_this.tilesConcat.Render(tile);
+// _this.stream.cancel();
 			}
 		});
 		this.tiffUnpacker = tiffUnpacker;
-		// this.write = (chunk, controller) => {
- // console.log('__ write __', chunk, controller);
-			// tiffUnpacker.addBinaryData(chunk);		// Called when a chunk is read.
-			// tiffUnpacker.addBinaryData.bind(tiffUnpacker);		// Called when a chunk is read.
-		// }
     }
 	close = () => {											// Called when the stream is closed.
 		console.timeEnd('TiffUnpacked');
@@ -68,27 +63,10 @@ console.log('__ flush __', controller);
 
 }
 export default async (name, opt) => {  // Fetch Tiff file to canvas
-	// let filename = url.split('/').pop();
-	let db = await IndDB.getTable({name});
-	// const databases = await self.indexedDB.databases();
-	// let db = databases.filter(it => it.name === 'tileList') || [await IndDB()];
-	opt.IndDB = IndDB;
-  console.log('nnnnnnnn', db);
-	// let db1 = IndDB.addRecord({db, name});
-
 	fetch(name, {mode: 'cors', credentials: 'include'}).then(response => response.body)
 	  .then(rs => {
 			const [rs1, rs2] = rs.tee();
 			rs2.pipeThrough(new TransformStream())
-			// rs2.pipeTo(new TiffStream(opt))
-				// new TiffStream(opt),
-				// {
-					// size: function (chunk) {
- // console.log('__ size __', chunk);
-						// return 122222;
-					// }
-				// }
-				// )).catch(console.error);
 			return rs1;
 	  })
 		.then(rs => rs.pipeTo(new WritableStream(new TiffStream(opt))))
