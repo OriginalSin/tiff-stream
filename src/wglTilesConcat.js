@@ -4,38 +4,24 @@ import m4 from './m4.js';
 "use strict";
 const qualityOptions = { anisotropicFiltering: true, mipMapping: true, linearFiltering: true };
 const _anisoExt = null;//, srcPoints, matrix, glResources, gl;
-// const contextOpt = {preserveDrawingBuffer: true};
-const contextOpt = {};
+const contextOpt = {preserveDrawingBuffer: true};
 
 export default class TilesConcat {
 	constructor(options) {
 		const { canvas, maxSize = {}, programs = [] } = options;
 		
+		// canvas.width = options.ImageWidth;
+		// canvas.height = options.ImageLength;
+		// canvas.width = maxSize.width || options.ImageWidth;
+		// canvas.height = maxSize.height || options.ImageLength;
 		const gl = canvas.getContext("webgl2", contextOpt);	// Get A WebGL context
 		this.gl = gl;
 		this.canvas = canvas;
 		this.tags = options;
-		this.progs = {
-			reproject: this._setReprojectProg(),
-		};
-this._init1();
-		let tfShader = texShader.f;
-		if (options.ColorMap) {
-			let imageSize = options.imageSize;
-			// tfShader = getColorMapShader(options.ColorMap, fMain);
-// console.warn('__colorMapShader__', fMain);
-			tfShader = webglUtils.getColorMapShader(options.ColorMap, fMain, texShader.f);
-			// tfShader = setLamb(tfShader, '0.', '0.');
-			// console.warn('__colorMapShader__', tfShader);
-		}
-			console.warn('__colorMapShader__', tfShader);
-		const size = this.tags.imageSize;
-		this.fbo = webglUtils.createFramebufferTexture(gl, size);
+ console.warn('__constructor__', options);
 
-		this.textureInfos = [];
-
-		const program = webglUtils.createProgramFromSources(this.gl, [texShader.v, tfShader]);
-		this.program = program;
+		const program = webglUtils.createProgramFromSources(this.gl, [vss, fss]);
+		this.program = program
 
 		// look up where the vertex data needs to go.
 		this.positionLocation = gl.getAttribLocation(program, "a_position");
@@ -45,7 +31,7 @@ this._init1();
 		this.matrixLocation = gl.getUniformLocation(program, "u_matrix");
 		this.textureLocation = gl.getUniformLocation(program, "u_texture");
 
-		this._init();
+		this.init();
 		this.vpScale = 1; // зум viewport
 		this.vpPos = [0, 0]; // смещение viewport
 		this.vpShift = [0, 0]; // текущее смещение viewport
@@ -54,7 +40,7 @@ this._init1();
 		
 		const onMess = (event) => {
 			const { type, canvas, pos = [0,0], scale} = event.data;
-		// console.log('onMess', type, scale, pos)
+		// console.log('onMess', type, shift, event)
 			if (scale) this.vpScale = scale;
 			if (type === 'drag') {
 				const [px, py] = pos;
@@ -72,18 +58,12 @@ this._init1();
 			// if (py <= maxy && py >= 0) this.vpShift[1] = py;
 		};
 		self.addEventListener("message", onMess.bind(this), false);
-		requestAnimationFrame(this._autoFrame.bind(this));
+		requestAnimationFrame(this.autoFrame.bind(this));
 	}
 
-	clear() {
- 		const {gl} = this;
-		gl.clear(gl.DEPTH_BUFFER_BIT | gl.COLOR_BUFFER_BIT);
-		// gl.clear(gl.COLOR_BUFFER_BIT);
-	}
-
-    _autoFrame(time) {
-		this._draw();
-		requestAnimationFrame(this._autoFrame.bind(this));
+    autoFrame(time) {
+		this.draw();
+		requestAnimationFrame(this.autoFrame.bind(this));
 	}
 
     resize(screen) {
@@ -93,7 +73,7 @@ this._init1();
  console.warn('__resize__', canvas.width, this.gl.canvas.width, twgl.m4);
 	}
 
-    _init_() {
+    init() {
 		const {gl} = this;
 		// const canvas = this.canvas;
 		
@@ -130,63 +110,27 @@ this._init1();
 
 		this.textureInfos = [];
 	}
-    _init() {
-		const {gl} = this;
 
-		const pos = new Float32Array([0, 0,  0, 1,  1, 0,  1, 0,  0, 1,  1, 1]);
-
-		this.positionBuffer = gl.createBuffer();				// Create a buffer.
-		gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer);	// Put a unit quad in the buffer
-		gl.bufferData(gl.ARRAY_BUFFER, pos, gl.STATIC_DRAW);
-
-		this.texcoordBuffer = gl.createBuffer();				// Create a buffer for texture coords
-		gl.bindBuffer(gl.ARRAY_BUFFER, this.texcoordBuffer);
-		gl.bufferData(gl.ARRAY_BUFFER, pos, gl.STATIC_DRAW);
-
-		// this.centerBuffer = gl.createBuffer();				// Create a buffer for texture center
-		// gl.bindBuffer(gl.ARRAY_BUFFER, this.centerBuffer);
-		// gl.bufferData(gl.ARRAY_BUFFER, this.ctexcoord, gl.STATIC_DRAW);
-	}
-    _init1() {
-		const {gl} = this;
-
-		const pos = new Float32Array([0, 0,  0, 1,  1, 0,  1, 0,  0, 1,  1, 1]);
-
-		this.positionBuffer1 = gl.createBuffer();				// Create a buffer.
-		gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer1);	// Put a unit quad in the buffer
-		gl.bufferData(gl.ARRAY_BUFFER, pos, gl.STATIC_DRAW);
-
-		this.texcoordBuffer1 = gl.createBuffer();				// Create a buffer for texture coords
-		gl.bindBuffer(gl.ARRAY_BUFFER, this.texcoordBuffer1);
-		gl.bufferData(gl.ARRAY_BUFFER, pos, gl.STATIC_DRAW);
-
-		// this.centerBuffer = gl.createBuffer();				// Create a buffer for texture center
-		// gl.bindBuffer(gl.ARRAY_BUFFER, this.centerBuffer);
-		// gl.bufferData(gl.ARRAY_BUFFER, this.ctexcoord, gl.STATIC_DRAW);
-	}
-
-	_draw(opt) {
- 		const {gl, canvas, vpShift, fbo} = this;
+	draw(opt) {
+ 		const {gl, canvas, vpShift} = this;
 		webglUtils.resizeCanvasToDisplaySize(canvas);
-		// this._init();
 
  		gl.viewport(0, 0, canvas.width, canvas.height);   // Tell WebGL how to convert from clip space to pixels
  		// gl.viewport(-vpShift[0], -vpShift[1], canvas.width, canvas.height);   // Tell WebGL how to convert from clip space to pixels
  		// gl.viewport(-vpShift[0], -vpShift[1], canvas.width + vpShift[0], canvas.height + vpShift[1]);   // Tell WebGL how to convert from clip space to pixels
  		// gl.viewport(vpShift[0], vpShift[1], rect[2], rect[3]);   // Tell WebGL how to convert from clip space to pixels
-		// gl.clear(gl.COLOR_BUFFER_BIT);
-		const imageSize = this.tags.imageSize;			// размеры tiff
-		// let matrix = m4.orthographic(0, imageSize.width, imageSize.height, 0, -1, 1);
-		webglUtils.bindFrambufferAndSetViewport(gl, fbo.fbo, imageSize.width, imageSize.height);
-
+    gl.clear(gl.COLOR_BUFFER_BIT);
 		let that = this;
-		this.clear();
-		this.textureInfos.forEach(function(drawInfo) {	// перерисовка тектур
+		this.textureInfos.forEach(function(drawInfo) {
 			if (!drawInfo.texture) return;
-			that._drawImage(drawInfo.texture, drawInfo.width, drawInfo.height, drawInfo.x, drawInfo.y );
+		  that.drawImage(
+			drawInfo.texture,
+			drawInfo.width,
+			drawInfo.height,
+			drawInfo.x,
+			drawInfo.y
+			);
 		});
- // console.warn('__textureInfos__', this.textureInfos.length);
-		this.drawScene();
 	}
 	
 	_setTex(opt) { // текстура по ndarray
@@ -197,9 +141,7 @@ this._init1();
 		const imageSize = this.tags.imageSize;			// размеры tiff
 		const {width, height} = tSize || {};			// размеры тайла
 		const bitmapType = ndarray.constructor.name;	// тип ndarray
-		// const bitmapChanels = ndarray.length / (width * height);
-		const BitsPerSample = this.tags.BitsPerSample;
-		const bitmapChanels = (Array.isArray(BitsPerSample) ? BitsPerSample.length : 1);		// сколько каналов(байтов на пиксель)
+		const bitmapChanels = ndarray.length / (width * height);	// сколько каналов
 		const DefPars = {
 			internalFormat: gl.RGBA,   // format we want in the texture
 			srcFormat: gl.RGBA,        // format of data we are supplying
@@ -209,41 +151,18 @@ this._init1();
 // console.log("bitmapType", bitmapType, bitmapChanels);
 		switch(bitmapType) {
 			case 'Uint8Array':
-				if (bitmapChanels === 1) {
-					mipMapping = false;
-					// internalFormat = gl.RGB8; srcFormat = gl.RGB;
-					// internalFormat = gl.RGB8; srcFormat = gl.RGB;
-					// internalFormat = gl.R8_SNORM; srcFormat = gl.RED; srcType = gl.BYTE;
-					internalFormat = gl.R8; srcFormat = gl.RED;
-				} else if (bitmapChanels === 3) {
-					mipMapping = false;
+				if (bitmapChanels === 3) {
+				mipMapping = false;
 					internalFormat = gl.RGB8;
 					srcFormat = gl.RGB;
 				}
 				break;
 			case 'Uint16Array':
 				if (bitmapChanels === 1) {
-var color_buffer_float_16ui = gl.getExtension('EXT_color_buffer_float'); // add for 16-bit
 
 	gl.pixelStorei( gl.UNPACK_ALIGNMENT, 1);
 	// gl.enable(gl.SCISSOR_TEST);
 	// gl.scissor(0, 0, 200, 200);
-				mipMapping = true;
-				// mipMapping = false;
-
-/*
-					internalFormat = gl.R16UI;
-					srcFormat = gl.RED_INTEGER;
-					srcType = gl.UNSIGNED_SHORT;
-
-					// ndarray = new Float32Array(ndarray);
-					// internalFormat = gl.R32F;
-					// srcFormat = gl.RED;
-					// srcType = gl.FLOAT;
-					// internalFormat = gl.RGBA4;
-					// srcFormat = gl.RGBA;
-					// srcType = gl.UNSIGNED_SHORT_4_4_4_4;
-EXT_color_buffer_float 
 				mipMapping = false;
 				let max = 0, min = 0;
 					// ndarray1 = new Float32Array(ndarray.length).fill(1);
@@ -256,18 +175,10 @@ EXT_color_buffer_float
 // console.log("bitmapType", max,min);
 					// ndarray1.forEach((v, i) => ndarray1[i] = v / 32768);
 					// ndarray = ndarray1;
-*/
 
-					// ndarray = new Float32Array(ndarray);
-					internalFormat = gl.RGB;
-					srcFormat = gl.RGB;
-					srcType = gl.UNSIGNED_SHORT_5_6_5;
-					
-					internalFormat = gl.DEPTH_COMPONENT16;
-					srcFormat = gl.DEPTH_COMPONENT;
-					srcType = gl.UNSIGNED_SHORT;
-
-
+					internalFormat = gl.R32F;
+					srcFormat = gl.RED;
+					srcType = gl.FLOAT;
 				}
 				break;
 			case 'Float32Array':
@@ -295,13 +206,6 @@ EXT_color_buffer_float
 			ndarray									// ndarray картинки
 		);
 
-if (mipMapping) {
-// set the filtering so we don't need mips and it's not filtered
-gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-}
 	}
 	
 	Render(opt) { // отрисовка тайла
@@ -316,7 +220,7 @@ gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 		gl.bindTexture(gl.TEXTURE_2D, tex);
 
 		gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE,
-                  new Uint8Array([255, 0, 0, 255]));    // Fill the texture with a 1x1 blue pixel.
+                  new Uint8Array([0, 0, 255, 255]));    // Fill the texture with a 1x1 blue pixel.
 
 		// let's assume all images are not a power of 2
 		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
@@ -337,13 +241,11 @@ gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 		// this.drawTile(opt);
 	}
 
+  
   // Unlike images, textures do not have a width and height associated
   // with them so we'll pass in the width and height of the texture
-	_drawImage(tex, texWidth, texHeight, dstX, dstY) {
- 		const {gl, program, canvas, vpShift, vpPos, tags, fbo} = this;
-		const imageSize = this.tags.imageSize;			// размеры tiff
-		// let matrix = m4.orthographic(0, imageSize.width, imageSize.height, 0, -1, 1);
-		// webglUtils.bindFrambufferAndSetViewport(gl, fbo.fbo, imageSize.width, imageSize.height);
+	drawImage(tex, texWidth, texHeight, dstX, dstY) {
+ 		const {gl, program, canvas, vpShift, vpPos} = this;
 		gl.bindTexture(gl.TEXTURE_2D, tex);
 
 		gl.useProgram(program);    // Tell WebGL to use our shader program pair
@@ -358,392 +260,51 @@ gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 		gl.vertexAttribPointer(this.texcoordLocation, 2, gl.FLOAT, false, 0, 0);
 
     // this matrix will convert from pixels to clip space
-		let matrix = m4.orthographic(0, imageSize.width, imageSize.height, 0, -1, 1);
-		// let matrix = m4.orthographic(0, gl.canvas.width, gl.canvas.height, 0, -1, 1);
-// let scale = this.vpScale;
-		// const dx = scale * (dstX - vpShift[0] - vpPos[0]);
-		// const dy = scale * (dstY - vpShift[1] - vpPos[1]);
-		// const w = scale * texWidth;
-		// const h = scale * texHeight;
-		// if (dy === 0) {
+		let matrix = m4.orthographic(0, gl.canvas.width, gl.canvas.height, 0, -1, 1);
+let scale = this.vpScale;
+		const dx = scale * (dstX - vpShift[0] - vpPos[0]);
+		const dy = scale * (dstY - vpShift[1] - vpPos[1]);
+		const w = scale * texWidth;
+		const h = scale * texHeight;
+		if (dx < 0) {
  // console.warn('__resize__', dx, dy, texWidth, texHeight, dstX, dstY);
-		// }
-// const iCenter = [imageSize.width / 2, imageSize.height / 2];	// центр tiff
-// const tCenter = [texWidth / 2, texHeight / 2];	// центр tile
-// const sCenter = [iCenter[0] - tCenter[0], iCenter[1] - tCenter[1]];	// shift
-// const ugol = Math.cos(sCenter[0] / sCenter[1]);	// ugol
-// matrix = m4.translate(matrix, -scale * sCenter[0], -scale * sCenter[1], 0);
-// matrix = m4.xRotate(matrix, 2 * ugol / Math.PI);
-// matrix = m4.yRotate(matrix, ugol / Math.PI);
+		}
+
     // this matrix will scale our 1 unit quad
     // from 1 unit to texWidth, texHeight units
-		const dx = dstX;
-		const dy = dstY;
-		const w = texWidth;
-		const h = texHeight;
-matrix = m4.translate(matrix, dx, dy, 0);    // this matrix will translate our quad to dstX, dstY
-matrix = m4.scale(matrix, w, h, 1);
+		matrix = m4.translate(matrix, dx, dy, 0);    // this matrix will translate our quad to dstX, dstY
+		matrix = m4.scale(matrix, w, h, 1);
 		gl.uniformMatrix4fv(this.matrixLocation, false, matrix);    // Set the matrix.
 
 		gl.uniform1i(this.textureLocation, 0);    // Tell the shader to get the texture from texture unit 0
 
 		gl.drawArrays(gl.TRIANGLES, 0, 6);    // draw the quad (2 triangles, 6 vertices)
- // console.warn('drawArrays', dx, dy, w, h);
   }
 
-	drawScene() {
- 		const {gl, program, canvas, tags, fbo, imLRBT, progs} = this;
- 		const reproject = progs.reproject;
-// return;
- 		// gl.useProgram(progs.reproject.p);    // перепроцирование
-
-		// gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer);
-		// gl.enableVertexAttribArray(progs.position);
-		// gl.vertexAttribPointer(progs.position, 2, gl.FLOAT, false, 0, 0);
-		
-		// gl.bindBuffer(gl.ARRAY_BUFFER, this.texcoordBuffer);
-		// gl.enableVertexAttribArray(progs.texcoordLocation);
-		// gl.vertexAttribPointer(progs.texcoordLocation, 2, gl.FLOAT, false, 0, 0);
-
-		// gl.uniform1i(progs.textureLocation, 0);    // Tell the shader to get the texture from texture unit 0
-
-		gl.bindTexture(gl.TEXTURE_2D, fbo.texture);	// входная текстура
- 		gl.useProgram(reproject.p);    // перепроцирование
-    // Setup the attributes to pull data from our buffers
-		gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer1);
-		gl.enableVertexAttribArray(reproject.positionLocation);
-		gl.vertexAttribPointer(reproject.positionLocation, 2, gl.FLOAT, false, 0, 0);
-		
-		gl.bindBuffer(gl.ARRAY_BUFFER, this.texcoordBuffer1);
-		gl.enableVertexAttribArray(reproject.texcoordLocation);
-		gl.vertexAttribPointer(reproject.texcoordLocation, 2, gl.FLOAT, false, 0, 0);
-
-webglUtils.bindFrambufferAndSetViewport(gl, null, canvas.width, canvas.height); // куда рисуем fbo=null то на экран
-		gl.viewport(0, 0, canvas.width, canvas.height);   // Tell WebGL how to convert from clip space to pixels
-		const imageSize = tags.imageSize;
-		// const scx = 1 - canvas.width * (imLRBT[1] - imLRBT[0]) / imageSize.width;
-		// const scy = 1 - canvas.height * (imLRBT[2] - imLRBT[3]) / imageSize.height;
-		// const scx = imLRBT[1] - imLRBT[0];
-		// const scy = imLRBT[2] - imLRBT[3];
-		let matrix = m4.orthographic(0, 1, 0, 1, -1, 1); // left, right, bottom, top
-		// let matrix = m4.orthographic(0, 1, 1, 0, -1, 1); // left, right, bottom, top
-		// let matrix = m4.orthographic(0, canvas.width, canvas.height, 0, -1, 1);
-		// let matrix = m4.orthographic(imLRBT[0], imLRBT[1], imLRBT[2], imLRBT[3], -1, 1);
-		// if (this.matrix4fv) matrix = m4.multiply(matrix, this.matrix4fv);
-// matrix = m4.translate(matrix, imLRBT[0] +  0.5 * scx, 0.5, 0);
-// matrix = m4.scale(matrix, scx,  scy, 1);
-// matrix = m4.scale(matrix, 0.5,  0.5, 1);
-// matrix = m4.scale(matrix, this.scx,  -this.scy, 1);
-// matrix = m4.translate(matrix, imLRBT[0] , imLRBT[3], 0);
-// matrix = m4.translate(matrix, imLRBT[0] , imLRBT[3], 0);
-		// let matrix = m4.orthographic(0, canvas.width, canvas.height, 0, -1, 1);
-		// let matrix = m4.orthographic(0, imageSize.width, imageSize.height, 0, -1, 1);
-
-		// gl.uniformMatrix4fv(this.matrixLocation, false, matrix);    // Set the matrix.
-		gl.uniformMatrix4fv(reproject.matrixLocation, false, matrix);    // Set the matrix.
-		this.clear();
-
-		gl.drawArrays(gl.TRIANGLES, 0, 6);    // draw the quad (2 triangles, 6 vertices)
-// console.log("drawScene", imageSize);
-	}
-
-    _setReprojectProg() {
-		const {gl} = this;
-		const p = webglUtils.createProgramFromSources(this.gl, [reprojectShader.v, reprojectShader.f]);
-
-		const tBound = {
-			p,
-			positionLocation: gl.getAttribLocation(p, "a_position"),
-			texcoordLocation: gl.getAttribLocation(p, "a_texcoord"),
-
-			matrixLocation: gl.getUniformLocation(p, "u_matrix"),
-			textureLocation: gl.getUniformLocation(p, "u_texture")
-
-		};
-		return tBound;
-	}
-
 }
 
+const vss = `
+	attribute vec4 a_position;
+	attribute vec2 a_texcoord;
+	uniform mat4 u_matrix;
 
+	varying vec2 v_texcoord;
 
-const reprojectShader = {
-	v: `#version 300 es
-		precision highp float;
-
-		in vec4 a_position;
-		in vec2 a_texcoord;
-		uniform mat4 u_matrix;
-
-		out vec2 v_texcoord;
-
-		void main() {
-		   gl_Position = u_matrix * a_position;
-		   v_texcoord = a_texcoord;
-		}
-	`,
-	f: `#version 300 es
-		precision highp float;
-
-		in vec2 v_texcoord;
-
-		uniform sampler2D u_texture;
-
-		out vec4 outColor;
-		
-		const float M_PI    = 3.14159265358979323846;
-		const float M_SQRT2 = 1.41421356237309504880;
-
-		vec2 getUV(vec2 t) {
-			float x = (2. * t.x - 1.);
-			float y = (2. * t.y - 1.);
-			float v = 1. - sqrt(x * x + y * y) / M_SQRT2;					// v := 1 - sqrt((2*x - 1)^2 + (2*y - 1)^2)/sqrt(2);
-			float u = 0.5 + atan((t.y - t.x) / (t.x + t.y - 1.)) / M_PI;	// u := 1/2 + arctan((y - x)/(x + y - 1))/Pi
-
-			return vec2(u, v);
-		}
-
-		void main() {
-			vec2 uv = getUV(v_texcoord);
-			outColor = texture(u_texture, uv);
-		}
-	`,
-};
-
-
-const tBoundShader_ = {
-	v: `#version 300 es
-		precision highp float;
-
-		in vec2 position;
-		in vec2 normal;
-		in float miter; 
-		uniform mat4 projection;
-		uniform mat4 model;
-		uniform mat4 view;
-		uniform float thickness;
-		out float edge;
-
-		void main() {
-		  edge = sign(miter);
-		  vec2 pointPos = position.xy + vec2(normal * thickness/2.0 * miter);
-		  gl_Position = projection * view * model * vec4(pointPos, 0.0, 1.0);
-		  gl_PointSize = 1.0;
-		}
-	`,
-	f: `#version 300 es
-		precision highp float;
-
-		uniform vec3 color;
-		uniform float inner;
-		in float edge;
-
-		// const vec3 color2 = vec3(0.8);
-
-		out vec4 outColor;
-		void main() {
-		  float v = 1.0 - abs(edge);
-		  v = smoothstep(0.65, 0.7, v*inner); 
-		  outColor = mix(vec4(color, 1.0), vec4(0.0), v);
-		}
-	`,
-};
-
-const fMain = `
 	void main() {
-	   outColor = texture(u_texture, v_texcoord);
-	}
-`;
-const texShader_ = {
-	v: `#version 300 es
-		precision highp float;
-
-		in vec4 a_position;
-		in vec2 a_texcoord;
-		uniform mat4 u_matrix;
-
-		out vec2 v_texcoord;
-
-		void main() {
-		   gl_Position = u_matrix * a_position;
-		   v_texcoord = a_texcoord;
-		}
-	`,
-	f: `#version 300 es
-		precision highp float;
-
-		in vec2 v_texcoord;
-
-		uniform sampler2D u_texture;
-
-		out vec4 outColor;				// we need to declare an output for the fragment shader
-${fMain}
-	`
-};
-
-const texShader = {
-	v: `#version 300 es
-		precision highp float;
-
-		in vec4 a_position;
-		in vec2 a_texcoord;
-		uniform mat4 u_matrix;
-
-		out vec2 v_texcoord;
-		out vec4 v_pos;
-
-		void main() {
-		   gl_Position = u_matrix * a_position;
-		   // v_pos = vec4(a_texcoord, 0., 0.) + gl_Position;
-		   // v_pos = a_position - u_matrix * vec4(a_texcoord, 0., 0.);
-		   v_pos = a_position;
-		   // v_pos = u_matrix * vec4(a_texcoord, 0., 0.);
-		   // v_pos = u_matrix * vec4(a_texcoord, 0., 0.) - a_position;
-		   // v_pos = u_matrix * vec4(a_texcoord, 0., 0.);
-		   // v_pos = gl_Position - u_matrix * vec4(a_texcoord, 0., 0.);
-		   // v_pos = gl_Position;
-		   v_texcoord = a_texcoord;
-		}
-	`,
-	f: `#version 300 es
-		precision highp float;
-
-		in vec2 v_texcoord;
-		in vec4 v_pos;
-
-		uniform sampler2D u_texture;
-
-		out vec4 outColor;				// we need to declare an output for the fragment shader
-${fMain}
-	`
-};
-
-/*
-const getColorMapShader = function(cm) {
-	const gs = cm.length / 3, bs = gs * 2;
-	let out = [];
-	let vec4p = [cm[0] >> 8, cm[gs] >> 8, cm[bs] >> 8, 255];
-	for (let i = 0; i < gs; i++) {
-		let vec4 = [cm[i] >> 8, cm[i + gs] >> 8, cm[i + bs] >> 8, 255];
-		if (vec4[0] !== vec4p[0] || vec4[1] !== vec4p[1] || vec4[2] !== vec4p[2]) {
-			out.push(`${out.length ? 'else ':''}if (v < float(${i / 255})) return vec4(${vec4p.map(v => v / 255).join(', ') + '.'});`);
-			vec4p = vec4;
-		}
-	}
-	out.push(`return vec4(${vec4p.map(v => v / 255).join('., ') + '.'});`);
-	out.unshift('vec4 colorMap(float v) {');
-	out.push('}');
-
-	let str = texShader.f;
-	str = str.replace(fMain, `
-		${out.join('\n')}
-	void main() {
-		   // float d = distance(v_pos, vec4(0., 0., 0., 0.));
-		   // float d = distance(v_texcoord, vec2(0., 0.));
-		   // if (d < 1.1) discard;
-	   vec4 tColor = texture(u_texture, v_texcoord);
-	   outColor = colorMap(tColor[0]);
-	}
-	`);
-	return str;
-}
-*/
-const lamb = `
-	float p = 0.;
-	float d = 0.;
-	vec2 lamb(vec2 c) {
-	   float sd = c[1] - d;
-	   float ccsd = cos(p) * cos(sd);
-	   float k = sqrt(2.0 / (1.0 + sin(c[0]) * sin(p) + cos(c[0]) * ccsd));
-	   return vec2(
-			k * cos(p) * sin(sd),
-			k * (cos(c[1]) * sin(p) - sin(c[1]) * ccsd)
-		);
+	   gl_Position = u_matrix * a_position;
+	   v_texcoord = a_texcoord;
 	}
 `;
 
-function qsfnz(eccent, sinphi) {
-  var con;
-  if (eccent > 1.0e-7) {
-    con = eccent * sinphi;
-    return ((1 - eccent * eccent) * (sinphi / (1 - con * con) - (0.5 / eccent) * Math.log((1 - con) / (1 + con))));
-  }
-  else {
-    return (2 * sinphi);
-  }
-}
+const fss = `
+	precision mediump float;
 
-/* determine latitude from authalic latitude */
-var P00 = 0.33333333333333333333;
+	varying vec2 v_texcoord;
 
-var P01 = 0.17222222222222222222;
-var P02 = 0.10257936507936507936;
-var P10 = 0.06388888888888888888;
-var P11 = 0.06640211640211640211;
-var P20 = 0.01641501294219154443;
+	uniform sampler2D u_texture;
 
-function authset(es) {
-  var t;
-  var APA = [];
-  APA[0] = es * P00;
-  t = es * es;
-  APA[0] += t * P01;
-  APA[1] = t * P10;
-  t *= es;
-  APA[0] += t * P02;
-  APA[1] += t * P11;
-  APA[2] = t * P20;
-  return APA;
-}
-
-function authlat (beta, APA) {
-  var t = beta + beta;
-  return (beta + APA[0] * Math.sin(t) + APA[1] * Math.sin(t + t) + APA[2] * Math.sin(t + t + t));
-}
-
-const setLamb = function(shader, p = '0.', d = '0.') {
-	let str = shader;
-	let HALF_PI = Math.PI / 2;
-    // this.qp = qsfnz(this.e, 1);
-  // var lam = p.x;
-  // var phi = p.y;
-    // sinphi = Math.sin(phi);
-    // cosphi = Math.cos(phi);
-    // coslam = Math.cos(lam);
-		// float x = ${p};
-		// float y = ${d};
-  // p.x = this.a * x + this.x0;
-  // p.y = this.a * y + this.y0;
-		   // float sd = c[0] - d;
-		   // float zn = 1.0 + sin(p) * sin(c[1]) + cos(p) * cos(c[1]) * cos(sd);
-		   // float k = sqrt(2.0 / zn);
-		   // return vec2(
-				// k * cos(c[1]) * sin(sd),
-				// 1. - k * (cos(p) * sin(c[1]) - sin(p) * cos(c[1]) * cos(sd))
-			// );
-    // rh = Math.sqrt(x * x + y * y);
-			// float rh = sqrt(x * x + y * y);
-
-	str = str.replace('void main() {', `
-		vec2 lamb(vec2 c) {
-			float x = c[0];
-			float y = c[1];
-			float q = x * x + y * y;
-if (q = 0.) return vec2(0., 0.);
-      float ab = 1. - q / this.qp;
-			float phi = 2. * asin(rh * 0.5);
-      y = -y;
-      phi = ${HALF_PI} - phi;
-    float lam = atan(x, y);
-
-
-		   return vec2(
-				abs(x) <= 3.14159265359 ? x : (x - (sign(x) * 4. * ${HALF_PI})),
-				phi
-			);
-		}
 	void main() {
-	`);
-	str = str.replace('texture(u_texture, v_texcoord)', 'texture(u_texture, lamb(v_texcoord))');
-	return str;
-};
+	   gl_FragColor = texture2D(u_texture, v_texcoord);
+	}
+
+`;
